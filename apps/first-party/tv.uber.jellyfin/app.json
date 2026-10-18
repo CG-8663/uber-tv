@@ -1,0 +1,37 @@
+{
+  "id": "tv.uber.jellyfin",
+  "name": "Jellyfin",
+  "version": "1.2.0",
+  "api": 4,
+  "kind": "app",
+  "author": "Uber TV",
+  "description": "Your Jellyfin server's movies and shows: continue watching, your libraries, what's new. Sign in with a Quick Connect code, or your username and password.",
+  "color": "#00a4dc",
+  "icon": "icon.png",
+  "main": "main.py",
+  "permissions": {
+    "server": { "label": "Your Jellyfin server", "defaultPort": 8096 },
+    "play": true,
+    "signIn": ["code", "password"],
+    "storage": true
+  },
+  "settings": [],
+  "home": [
+    { "key": "continue", "label": "Continue watching", "shape": "wide" },
+    { "key": "latest", "label": "Recently added", "shape": "poster" }
+  ],
+  "layout": {
+    "look": "posters",
+    "rows": [
+      { "id": "continue", "label": "Continue watching", "shape": "wide" },
+      { "id": "nextup", "label": "Next up", "shape": "wide" },
+      { "id": "libraries", "label": "Your libraries", "shape": "wide" },
+      { "id": "latest", "label": "Recently added", "shape": "poster" },
+      { "id": "seasons", "label": "Seasons", "shape": "poster" },
+      { "id": "episodes", "label": "Episodes", "shape": "wide", "layout": "grid" },
+      { "id": "results", "label": "Search results", "shape": "poster", "layout": "grid" },
+      { "id": "cast", "label": "Cast", "shape": "circle" },
+      { "id": "filmography", "label": "Their movies and shows", "shape": "poster", "layout": "grid" }
+    ]
+  }
+}

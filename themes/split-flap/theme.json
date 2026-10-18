@@ -1,0 +1,336 @@
+{
+  "name": "Split-Flap",
+  "description": "A departures board: what's on and its status per channel, on flaps that flip when it changes.",
+  "fonts": {
+    "body": [
+      "Nimbus Sans Narrow",
+      "Liberation Sans Narrow",
+      "Adwaita Sans",
+      "sans-serif"
+    ],
+    "display": [
+      "Nimbus Sans Narrow",
+      "Liberation Sans Narrow",
+      "Adwaita Sans",
+      "sans-serif"
+    ],
+    "mono": [
+      "Nimbus Sans Narrow",
+      "JetBrainsMono Nerd Font",
+      "monospace"
+    ]
+  },
+  "colors": {
+    "text": "#f2f1ec",
+    "textDim": "#8e8c86",
+    "accent": "#ffc233",
+    "timeline": "#ffc233",
+    "cell": "#1b1b1b",
+    "cellBorder": "#2b2b2b",
+    "channelCell": "#1b1b1b",
+    "selected": "#ffc233",
+    "selectedText": "#0b0b0b",
+    "header": "#00000000",
+    "headerText": "#ffc233",
+    "band": "#00000000",
+    "bandText": "#ffc233",
+    "infoPanel": "#00000000",
+    "preview": "#000000",
+    "alert": "#ff5a3c",
+    "bgTop": "#0b0b0b",
+    "bgBottom": "#050505",
+    "ltBg": "#f00b0b0b",
+    "ltBorder": "#2b2b2b",
+    "ltNumber": "#ffc233",
+    "ltChannel": "#8e8c86",
+    "ltTitle": "#f2f1ec",
+    "ltProgress": "#ffc233",
+    "ltTrack": "#2b2b2b",
+    "ltClock": "#f2f1ec",
+    "ltTime": "#ffc233",
+    "cardBackdrop": "#eb050505",
+    "cardName": "#f2f1ec",
+    "cardStatus": "#ffc233",
+    "cardFrame": "#2b2b2b",
+    "boxBg": "#121212",
+    "boxBorder": "#ffc233",
+    "scrim": "#cc050505",
+    "keyFace": "#1b1b1b",
+    "keyText": "#f2f1ec",
+    "keyEdge": "#050505",
+    "miniBar": "#eb050505"
+  },
+  "background": {
+    "mode": "none"
+  },
+  "home": {
+    "background": {
+      "mode": "none",
+      "dim": 0.6
+    }
+  },
+  "layout": {
+    "masthead": "title",
+    "titleDate": true,
+    "clock": "masthead",
+    "info": false,
+    "list": "board",
+    "columns": [
+      "number",
+      "name",
+      "now",
+      "status",
+      "nextAt"
+    ],
+    "boardRowHeight": 2.3,
+    "footer": "keys"
+  },
+  "elements": {
+    "title": {
+      "color": "text",
+      "size": 1.5,
+      "letterSpacing": 0.35,
+      "weight": "bold"
+    },
+    "showing": {
+      "color": "textDim",
+      "letterSpacing": 0.1
+    },
+    "showing:filtered": {
+      "color": "accent"
+    },
+    "clock": {
+      "color": "accent",
+      "size": 1.6,
+      "letterSpacing": 0.1
+    },
+    "tableHeader": {
+      "color": "accent",
+      "case": "upper",
+      "letterSpacing": 0.18,
+      "size": 0.75,
+      "weight": "bold"
+    },
+    "tableGroup": {
+      "color": "textDim",
+      "case": "upper",
+      "letterSpacing": 0.18,
+      "size": 0.75
+    },
+    "tableRow": {
+      "padding": 0
+    },
+    "tableRow:current": {
+      "fill": "#262626",
+      "border": {
+        "width": 0.12,
+        "color": "accent",
+        "sides": [
+          "left"
+        ]
+      }
+    },
+    "flapTile": {
+      "fill": "#1c1c1c",
+      "radius": 0.1,
+      "seam": "#050505",
+      "aspect": 0.62,
+      "gap": "2px",
+      "text": {
+        "color": "text",
+        "size": 1.25,
+        "weight": "bold",
+        "case": "upper"
+      }
+    },
+    "flapTile:status": {
+      "text": {
+        "color": "accent"
+      }
+    },
+    "liveTag": {
+      "color": "alert"
+    },
+    "keycap": {
+      "fill": "#1c1c1c",
+      "depth": 0,
+      "border": "none",
+      "radius": 0.12,
+      "text": {
+        "color": "text"
+      }
+    },
+    "keyLabel": {
+      "color": "textDim",
+      "letterSpacing": 0.06
+    },
+    "box": {
+      "border": {
+        "width": "1px",
+        "color": "accent"
+      }
+    },
+    "boxTitle": {
+      "letterSpacing": 0.2
+    },
+    "listRow:current": {
+      "fill": "#1f1f1f"
+    },
+    "lowerThird": {
+      "border": {
+        "width": "1px",
+        "color": "#2b2b2b"
+      },
+      "radius": 0.2
+    },
+    "ltNumber": {
+      "letterSpacing": 0.05
+    },
+    "cardName": {
+      "letterSpacing": 0.15
+    },
+    "homeTile": {
+      "fill": "#1c1c1c",
+      "border": "none",
+      "radius": 0.15,
+      "text": {
+        "case": "upper",
+        "letterSpacing": 0.15
+      }
+    },
+    "homeTile:current": {
+      "fill": "accent",
+      "text": {
+        "color": "#0b0b0b"
+      }
+    },
+    "homeCard": {
+      "radius": 0.1
+    },
+    "homeCard:current": {
+      "border": {
+        "color": "accent"
+      }
+    },
+    "posterCard": {
+      "radius": 0.1
+    },
+    "posterCard:current": {
+      "border": {
+        "color": "accent"
+      }
+    },
+    "heroKicker": {
+      "color": "accent",
+      "letterSpacing": 0.3
+    },
+    "heroTitle": {
+      "case": "upper",
+      "letterSpacing": 0.08,
+      "weight": "bold"
+    },
+    "homeRowTitle": {
+      "case": "upper",
+      "letterSpacing": 0.18,
+      "color": "accent",
+      "size": 0.8
+    },
+    "rowTitle": {
+      "case": "upper",
+      "letterSpacing": 0.18,
+      "color": "accent",
+      "size": 0.8
+    },
+    "libraryTab": {
+      "case": "upper",
+      "letterSpacing": 0.15
+    },
+    "statusChip": {
+      "radius": 0.15,
+      "fill": "#1c1c1c",
+      "border": "none",
+      "text": {
+        "case": "upper",
+        "letterSpacing": 0.1
+      }
+    },
+    "liveBadge": {
+      "radius": 0.1
+    },
+    "cardBadge": {
+      "radius": 0.1
+    },
+    "panelHeader": {
+      "letterSpacing": 0.2
+    },
+    "menuCategory": {
+      "radius": 0.15,
+      "text": {
+        "case": "upper",
+        "letterSpacing": 0.15,
+        "size": 1.4
+      }
+    },
+    "menuCategory:focused": {
+      "fill": "accent",
+      "shadow": "none",
+      "text": {
+        "color": "#0b0b0b"
+      }
+    },
+    "menuRow": {
+      "fill": "#1c1c1c",
+      "radius": 0.15,
+      "text": {
+        "case": "upper",
+        "letterSpacing": 0.1,
+        "size": 1.3
+      }
+    },
+    "menuRow:focused": {
+      "fill": "accent",
+      "grow": 0,
+      "shadow": "none",
+      "text": {
+        "color": "#0b0b0b"
+      }
+    },
+    "menuValue": {
+      "text": {
+        "case": "upper",
+        "letterSpacing": 0.08
+      }
+    },
+    "menuValue:focused": {
+      "text": {
+        "color": "#0b0b0b"
+      }
+    },
+    "toggle": {
+      "shape": "rect",
+      "radius": 0.15,
+      "fill": "#2a2a2a",
+      "knob": "#6b6b6b"
+    },
+    "toggle:on": {
+      "fill": "#0b0b0b",
+      "knob": "accent"
+    },
+    "searchField": {
+      "fill": "#1c1c1c",
+      "border": "none",
+      "radius": 0.15,
+      "text": {
+        "case": "upper",
+        "letterSpacing": 0.15
+      }
+    },
+    "searchField:focused": {
+      "border": {
+        "width": 0.1,
+        "color": "accent"
+      },
+      "shadow": "none"
+    }
+  }
+}

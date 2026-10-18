@@ -1,0 +1,24 @@
+{
+  "id": "tv.uber.scores",
+  "name": "Scores",
+  "version": "1.2.0",
+  "api": 4,
+  "kind": "app",
+  "author": "Uber TV",
+  "description": "Live scores, today's games and finals for the NFL, NBA, MLB, NHL, the Premier League and MLS, from ESPN.",
+  "color": "#d62828",
+  "icon": "icon.png",
+  "main": "main.py",
+  "permissions": { "net": ["site.api.espn.com", "a.espncdn.com"] },
+  "settings": [
+    { "key": "league", "type": "choice", "label": "League", "choices": ["NFL", "NBA", "MLB", "NHL", "Premier League", "MLS"] }
+  ],
+  "home": [ { "key": "now", "label": "Scores now" } ],
+  "layout": {
+    "rows": [
+      { "id": "in", "label": "Live now", "shape": "logo", "layout": "grid" },
+      { "id": "pre", "label": "Coming up", "shape": "logo", "layout": "grid" },
+      { "id": "post", "label": "Final", "shape": "logo", "layout": "grid" }
+    ]
+  }
+}

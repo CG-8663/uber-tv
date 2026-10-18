@@ -1,0 +1,461 @@
+#!/usr/bin/python3
+"""The phone remote: a small web server on your local network that serves a
+remote control page to paired phones and passes their button presses to the
+guide. It runs only while the remote is turned on in the guide.
+
+Security:
+- Answers only private addresses (your home network, Tailscale, this machine).
+- Pairs and takes commands only from another device: never from this
+  computer (its loopback or its own address), where any program could
+  read the code off the screen and pair itself as a phone.
+- A phone pairs with a 6-digit code (or the QR code) shown on the TV, valid
+  for two minutes, single use; five wrong guesses and the code changes.
+- A paired phone holds a random token in an HttpOnly, SameSite=Strict cookie;
+  only its SHA-256 is stored (remotes.json, readable by you alone).
+- Commands are a fixed list; nothing a phone sends reaches a file, a shell or
+  a URL. Changes must come with a custom header and a same-origin request.
+- A paired phone does what the TV's keys do, the apps boxes included (it's
+  yours). Plain HTTP: someone already on your network who can watch its
+  traffic could copy a phone's token and press its buttons.
+
+With --probe it only prints the network it would serve ({"probe": {...}})
+and exits, without opening anything: the guide shows that on the screen
+where you agree to turn the remote on.
+
+Talks to the guide over stdin and stdout, one JSON object per line:
+  guide -> here:  {"state": {...}}     what's on, for the phones
+                  {"pairing": true}    show a code (while the remote screen is open)
+                  {"pairing": false}
+                  {"forget": "<id>"}   unpair a phone
+  here -> guide:  {"ready": {"port", "address", "subnet", "hostname"}}
+                  {"pairing": {"code", "url", "qr", "expires"}}
+                  {"devices": [{"id", "name", "added", "seen"}]}
+                  {"command": {"cmd", "number", "digits"}}   (digits: the
+                  channel lock's passcode, for "code": 4 to 8, as text)
+                  {"error": "..."}
+"""
+
+import hashlib
+import hmac
+import http.server
+import ipaddress
+import json
+import os
+import pathlib
+import re
+import secrets
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+
+HOME = pathlib.Path.home()
+CONFIG = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "om-pg"
+CACHE = pathlib.Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "om-pg"
+DEVICES = CONFIG / "remotes.json"
+LOGOS = CACHE / "logos"
+PAGE = pathlib.Path(__file__).resolve().parent.parent / "remote" / "index.html"
+
+PORT = next((int(a) for a in sys.argv[1:] if a.isdigit()), 24750)
+CODE_LIFE = 120
+CODE_TRIES = 5
+COMMANDS = {"up", "down", "left", "right", "ok", "back", "chup", "chdown", "guide", "full", "mini", "mute", "power", "tune", "options", "code"}
+PRIVATE = [ipaddress.ip_network(n) for n in
+           ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16")]
+
+out_lock = threading.Lock()
+lock = threading.RLock()
+changed = threading.Condition(lock)
+state = {"version": 0, "data": {}}
+pairing = {"on": False, "code": "", "link": "", "expires": 0, "tries": 0, "qr": ""}
+network = {}
+last_attempt = {}
+
+
+def say(message):
+    with out_lock:
+        print(json.dumps(message), flush=True)
+
+
+# Paired phones
+
+def load_devices():
+    try:
+        return json.loads(DEVICES.read_text()).get("devices", [])
+    except (OSError, ValueError):
+        return []
+
+
+devices = load_devices()
+
+
+def save_devices():
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    partial = DEVICES.with_suffix(".part")
+    with open(os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        json.dump({"devices": devices}, f, indent=2)
+    os.replace(partial, DEVICES)
+
+
+def report_devices():
+    say({"devices": [{k: d[k] for k in ("id", "name", "added", "seen")} for d in devices]})
+
+
+def digest(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def device_for(token):
+    if not token:
+        return None
+    wanted = digest(token)
+    for d in devices:
+        if hmac.compare_digest(d["hash"], wanted):
+            return d
+    return None
+
+
+def phone_name(agent):
+    agent = agent or ""
+    model = ("iPhone" if "iPhone" in agent else "iPad" if "iPad" in agent
+             else "Android phone" if "Android" in agent else "Phone")
+    browser = next((b for b in ("Firefox", "EdgA", "Chrome", "Safari") if b in agent), "")
+    return f"{model} ({browser.replace('EdgA', 'Edge')})" if browser else model
+
+
+def add_device(agent):
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    devices.append({"id": secrets.token_hex(4), "hash": digest(token), "name": phone_name(agent), "added": now, "seen": now})
+    save_devices()
+    report_devices()
+    return token
+
+
+# Pairing codes
+
+def new_code():
+    with lock:
+        if not pairing["on"]:
+            return
+        pairing["code"] = f"{secrets.randbelow(1_000_000):06d}"
+        pairing["link"] = secrets.token_urlsafe(16)
+        pairing["expires"] = time.time() + CODE_LIFE
+        pairing["tries"] = 0
+        url = f"http://{network.get('address', '127.0.0.1')}:{PORT}/?pair={pairing['link']}"
+        old = pairing["qr"]
+        qr = CACHE / f"remote-qr-{secrets.token_hex(4)}.png"
+        try:
+            CACHE.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["/usr/bin/qrencode", "-o", str(qr), "-s", "10", "-m", "2", "-l", "M", "--", url],
+                           check=True, timeout=10, capture_output=True)
+            pairing["qr"] = str(qr)
+        except Exception:
+            pairing["qr"] = ""
+        if old:
+            pathlib.Path(old).unlink(missing_ok=True)
+        say({"pairing": {"code": pairing["code"], "url": f"http://{network.get('address')}:{PORT}",
+                         "qr": pairing["qr"], "expires": int(pairing["expires"])}})
+
+
+def end_pairing():
+    with lock:
+        pairing.update(on=False, code="", link="", expires=0, tries=0)
+        if pairing["qr"]:
+            pathlib.Path(pairing["qr"]).unlink(missing_ok=True)
+            pairing["qr"] = ""
+
+
+def code_keeper():
+    while True:
+        time.sleep(1)
+        with lock:
+            due = pairing["on"] and time.time() >= pairing["expires"]
+        if due:
+            new_code()
+
+
+def try_pair(code=None, link=None, ip=""):
+    """True if the code or link is right. Wrong codes count; five and it changes."""
+    with lock:
+        if not pairing["on"] or time.time() >= pairing["expires"]:
+            return False
+        if code is not None:
+            if time.time() - last_attempt.get(ip, 0) < 1:
+                return False   # one guess a second
+            last_attempt[ip] = time.time()
+            ok = hmac.compare_digest(str(code), pairing["code"])
+        else:
+            ok = bool(link) and hmac.compare_digest(str(link), pairing["link"])
+        if ok:
+            new_code()   # single use; the next phone gets a fresh one
+            return True
+        if code is not None:
+            pairing["tries"] += 1
+            if pairing["tries"] >= CODE_TRIES:
+                new_code()
+        return False
+
+
+# The network we're on
+
+def find_network():
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))   # no packet is sent; it only picks a route
+        address = probe.getsockname()[0]
+    except OSError:
+        address = "127.0.0.1"
+    finally:
+        probe.close()
+    subnet = f"{address}/24"
+    try:
+        lines = subprocess.run(["/usr/bin/ip", "-4", "-o", "addr", "show"], capture_output=True, text=True, timeout=5).stdout
+        for m in re.finditer(r"inet (\d+\.\d+\.\d+\.\d+/\d+)", lines):
+            if m.group(1).split("/")[0] == address:
+                subnet = m.group(1)
+    except Exception:
+        pass
+    return {"port": PORT, "address": address, "subnet": str(ipaddress.ip_interface(subnet).network),
+            "hostname": socket.gethostname() + ".local"}
+
+
+# The web server
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "ProgramGuideRemote"
+    sys_version = ""
+
+    def log_message(self, *args):
+        pass
+
+    def private(self):
+        try:
+            ip = ipaddress.ip_address(self.client_address[0])
+        except ValueError:
+            return False
+        return any(ip in n for n in PRIVATE)
+
+    def from_here(self):
+        """A request from this computer: loopback, or its own address (a
+        connection to yourself comes from the address it goes to)"""
+        try:
+            ip = ipaddress.ip_address(self.client_address[0])
+            return ip.is_loopback or ip == ipaddress.ip_address(self.connection.getsockname()[0])
+        except (ValueError, OSError):
+            return True
+
+    def token(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == "omt":
+                return value
+        return ""
+
+    def device(self):
+        d = device_for(self.token())
+        if d and time.time() - d.get("seen", 0) > 3600:
+            d["seen"] = int(time.time())
+            save_devices()
+        return d
+
+    def send(self, code, body=b"", kind="application/json", headers=None):
+        self.send_response(code)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                         "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def json(self, code, data, headers=None):
+        self.send(code, json.dumps(data).encode(), headers=headers)
+
+    def cookie(self, token):
+        return {"Set-Cookie": f"omt={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000"}
+
+    def same_origin(self):
+        origin = self.headers.get("Origin")
+        if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+            return False
+        return self.headers.get("X-Remote") == "1"
+
+    def do_GET(self):
+        if not self.private():
+            return self.send(403)
+        url = urllib.parse.urlsplit(self.path)
+        if url.path == "/":
+            link = urllib.parse.parse_qs(url.query).get("pair", [""])[0]
+            if link and try_pair(link=link, ip=self.client_address[0]):
+                token = add_device(self.headers.get("User-Agent"))
+                return self.send(303, headers={"Location": "/", **self.cookie(token)})
+            try:
+                page = PAGE.read_bytes()
+            except OSError:
+                return self.send(500)
+            return self.send(200, page, "text/html; charset=utf-8")
+        if not self.device():
+            return self.json(401, {"error": "not paired"})
+        if url.path == "/api/state":
+            with lock:
+                return self.json(200, state["data"])
+        if url.path == "/api/events":
+            return self.events()
+        m = re.fullmatch(r"/api/logo/(UC[A-Za-z0-9_-]{22})\.jpg", url.path)
+        if m:
+            logo = LOGOS / f"{m.group(1)}.jpg"
+            if logo.exists():
+                return self.send(200, logo.read_bytes(), "image/jpeg", {"Cache-Control": "max-age=86400"})
+        return self.send(404)
+
+    def events(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        seen = -1
+        try:
+            while True:
+                with changed:
+                    if state["version"] == seen:
+                        changed.wait(timeout=15)
+                    version, data = state["version"], state["data"]
+                if version != seen:
+                    seen = version
+                    self.wfile.write(b"data: " + json.dumps(data).encode() + b"\n\n")
+                else:
+                    self.wfile.write(b": still here\n\n")
+                self.wfile.flush()
+                if not self.device():
+                    return   # unpaired while watching
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def body(self):
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+            return json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, OSError):
+            return {}
+
+    def do_POST(self):
+        if not self.private():
+            return self.send(403)
+        if self.from_here():
+            return self.json(403, {"error": "Pair and press buttons from your phone, not from this computer."})
+        if not self.same_origin():
+            return self.json(403, {"error": "bad request"})
+        url = urllib.parse.urlsplit(self.path)
+        data = self.body()
+        if url.path == "/api/pair":
+            code = re.sub(r"\D", "", str(data.get("code", "")))[:6]
+            if len(code) == 6 and try_pair(code=code, ip=self.client_address[0]):
+                token = add_device(self.headers.get("User-Agent"))
+                return self.json(200, {"ok": True}, self.cookie(token))
+            return self.json(403, {"error": "That code didn't work. Check the TV for the current one."})
+        if not self.device():
+            return self.json(401, {"error": "not paired"})
+        if url.path == "/api/cmd":
+            cmd = str(data.get("cmd", ""))
+            if cmd not in COMMANDS:
+                return self.json(400, {"error": "unknown command"})
+            command = {"cmd": cmd}
+            if cmd == "tune":
+                try:
+                    number = int(data.get("number"))
+                except (TypeError, ValueError):
+                    return self.json(400, {"error": "no channel number"})
+                if not 1 <= number <= 99999:
+                    return self.json(400, {"error": "no such channel"})
+                command["number"] = number
+            if cmd == "code":
+                # the channel lock's passcode, typed on the phone: as text (a
+                # leading 0 counts), 4 to 8 digits, never written anywhere
+                digits = data.get("digits")
+                if not isinstance(digits, str) or not re.match(r"^[0-9]{4,8}\Z", digits):
+                    return self.json(400, {"error": "a passcode is 4 to 8 digits"})
+                command["digits"] = digits
+            say({"command": command})
+            return self.send(204)
+        if url.path == "/api/forget":   # a phone unpairing itself
+            d = self.device()
+            devices[:] = [x for x in devices if x is not d]
+            save_devices()
+            report_devices()
+            return self.json(200, {"ok": True}, {"Set-Cookie": "omt=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
+        return self.send(404)
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def server_bind(self):
+        # HTTPServer.server_bind looks up a name for 0.0.0.0, which waits
+        # seconds for a DNS timeout; nothing here uses the name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+# The guide
+
+def listen():
+    for line in sys.stdin:
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(message, dict):
+            continue
+        if isinstance(message.get("state"), dict):
+            with changed:
+                state["data"] = message["state"]
+                state["version"] += 1
+                changed.notify_all()
+        if "pairing" in message:
+            if message["pairing"]:
+                with lock:
+                    pairing["on"] = True
+                new_code()
+            else:
+                end_pairing()
+        if isinstance(message.get("forget"), str):
+            devices[:] = [d for d in devices if d["id"] != message["forget"]]
+            save_devices()
+            report_devices()
+    end_pairing()
+    os._exit(0)   # the guide went away
+
+
+def main():
+    if "--probe" in sys.argv:
+        say({"probe": find_network()})
+        return
+    try:
+        server = Server(("0.0.0.0", PORT), Handler)
+    except OSError as e:
+        say({"error": f"Port {PORT} is in use ({e.strerror}). Choose another in settings.json (remotePort)."})
+        sys.exit(2)
+    network.update(find_network())
+    say({"ready": network})
+    report_devices()
+    threading.Thread(target=code_keeper, daemon=True).start()
+    threading.Thread(target=listen, daemon=True).start()
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

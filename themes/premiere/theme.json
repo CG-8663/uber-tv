@@ -1,0 +1,69 @@
+{
+  "name": "Premiere",
+  "description": "Ink and mint screening room. The channel banner and the channel-change screen fade out instead of sitting in a box.",
+  "colors": {
+    "text": "#ddf7ff",
+    "textDim": "#b5c5db",
+    "accent": "#82fb9c",
+    "timeline": "#e4c27a",
+    "cell": "#b8151828",
+    "cellBorder": "#2d3450",
+    "channelCell": "#c010131c",
+    "selected": "#d7e1ec",
+    "selectedText": "#0b0c16",
+    "header": "#e614182c",
+    "headerText": "#82fb9c",
+    "band": "#e60e1222",
+    "bandText": "#82fb9c",
+    "infoPanel": "#d910131f",
+    "preview": "#000000",
+    "alert": "#ff6b57",
+    "bgTop": "#0b0c16",
+    "bgBottom": "#06060c",
+    "ltBg": "#00000000",
+    "ltBorder": "#00000000",
+    "ltNumber": "#82fb9c",
+    "ltChannel": "#b5c5db",
+    "ltTitle": "#ddf7ff",
+    "ltProgress": "#82fb9c",
+    "ltTrack": "#55304458",
+    "ltClock": "#ddf7ff",
+    "ltTime": "#e4c27a",
+    "cardBackdrop": "#00000000",
+    "cardName": "#82fb9c",
+    "cardStatus": "#b5c5db",
+    "cardFrame": "#00000000",
+    "boxBg": "#10131f",
+    "boxBorder": "#82fb9c",
+    "scrim": "#c006060c",
+    "keyFace": "#e6eef6",
+    "keyText": "#0b0c16",
+    "keyEdge": "#8aa0be",
+    "miniBar": "#ee0b0c16"
+  },
+  "images": {
+    "lt": {
+      "src": "lt.png",
+      "fit": "fill",
+      "opacity": 1
+    },
+    "card": {
+      "src": "card.webp",
+      "fit": "fill",
+      "opacity": 1
+    }
+  },
+  "background": {
+    "mode": "image",
+    "image": "background.jpg",
+    "dim": 0.42
+  },
+  "lowerThird": {
+    "show": true,
+    "seconds": 10
+  },
+  "card": {
+    "show": true,
+    "seconds": 2.2
+  }
+}

@@ -1,0 +1,488 @@
+#!/usr/bin/python3
+"""Backups of Uber TV's channels and settings, putting one back, and
+resetting Uber TV to how it was when first installed.
+
+    om-pg-backup backup <installed version>
+    om-pg-backup list
+    om-pg-backup restore <backup file name>
+    om-pg-backup reset
+
+Its folders are worked out here, from XDG_CONFIG_HOME, XDG_DATA_HOME and
+XDG_CACHE_HOME (or their usual places in your home folder), each ending in
+om-pg; backups go in "Uber TV backups" in your Documents folder
+(XDG_DOCUMENTS_DIR in ~/.config/user-dirs.dirs, or ~/Documents). Nothing
+here takes a folder from its caller.
+
+backup writes one file, uber-tv-backup-<date>-<time>.tar.gz, readable by
+you alone: your channels, settings (with your program listings, Home and the
+nav rail), My List and Continue watching, your themes, and the pictures you
+picked. Paired phones, the channel lock and app sign-ins are never in it,
+and apps aren't (they're installed again from Get apps). It's written to a
+temporary file and renamed into place. Prints {"ok", "file", "size"}.
+
+list prints {"ok", "folder", "backups": [{"file", "made", "size"}]}, newest
+first.
+
+restore takes a backup from that folder, by its name, and checks it as it
+reads: only the names a backup holds, regular files under a size limit,
+JSON that reads. It's unpacked beside your settings, then each part it holds
+is swapped in for yours; if a step fails, what was swapped goes back and
+nothing has changed. The phone remote's settings stay as they are here (a
+backup never turns it on). Prints {"ok"}.
+
+reset moves Uber TV's folders aside (its settings, its apps and their data,
+its cache) and leaves empty ones in their place; if a move fails, the ones
+before it go back and nothing has changed. Then what was moved is deleted.
+Prints {"ok", "left"}: what couldn't be deleted (moved aside, never read
+again).
+
+Nothing is read or written through a symbolic link, every read is bounded,
+and anything that goes wrong prints {"ok": false, "error": "..."}.
+"""
+
+import gzip
+import io
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tarfile
+import tempfile
+import time
+import zlib
+
+NAME = re.compile(r"^uber-tv-backup-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})\.tar\.gz$")
+MANIFEST = "uber-tv-backup.json"
+FORMAT = 1
+SEGMENT = r"(?!\.)[A-Za-z0-9._-]{1,64}"
+# each part a backup may hold, under config/, and its size limit
+JSON_PARTS = {"channels.json": 64 << 20, "settings.json": 1 << 20, "library.json": 64 << 20, "history.json": 16 << 20}
+THEME_FILE = re.compile(r"^themes/" + SEGMENT + r"\.json$|^themes/" + SEGMENT + r"/" + SEGMENT + r"\.(json|png|jpg|jpeg|webp)$")
+PICTURE = re.compile(r"^app-pictures/[0-9a-f]{32}\.(jpg|jpeg|png|webp)$")
+MAX_PICTURE = 50 << 20
+MAX_TOTAL = 512 << 20
+MAX_ENTRIES = 4000
+MAX_BACKUPS = 500
+VERSION = re.compile(r"^\d{1,9}\.\d{1,9}\.\d{1,9}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$")
+
+
+def say(obj):
+    print(json.dumps(obj))
+
+
+class Refused(Exception):
+    pass
+
+
+# ---- where things are ----
+
+def home():
+    return os.path.expanduser("~")
+
+
+def xdg(var, fallback):
+    v = os.environ.get(var, "")
+    return v if v.startswith("/") else os.path.join(home(), fallback)
+
+
+def roots():
+    return {"config": os.path.join(xdg("XDG_CONFIG_HOME", ".config"), "om-pg"),
+            "data": os.path.join(xdg("XDG_DATA_HOME", ".local/share"), "om-pg"),
+            "cache": os.path.join(xdg("XDG_CACHE_HOME", ".cache"), "om-pg")}
+
+
+def documents():
+    """XDG_DOCUMENTS_DIR from user-dirs.dirs ($HOME expanded), or ~/Documents."""
+    path = os.path.join(xdg("XDG_CONFIG_HOME", ".config"), "user-dirs.dirs")
+    try:
+        text = read_bounded(path, 64 << 10).decode("utf-8", "replace")
+        m = re.search(r'^XDG_DOCUMENTS_DIR="([^"\n]*)"', text, re.M)
+        if m:
+            d = m.group(1).replace("$HOME", home())
+            if d.startswith("/") and os.path.realpath(d) != os.path.realpath(home()):
+                return d
+    except (OSError, Refused):
+        pass
+    return os.path.join(home(), "Documents")
+
+
+def backups_folder():
+    return os.path.join(documents(), "Uber TV backups")
+
+
+def real_dir(path):
+    """True for a folder that's itself, not a link to one."""
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        return False
+
+
+# ---- reading ----
+
+def read_bounded(path, cap):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise Refused(os.path.basename(path) + " isn't a file")
+        data = f.read(cap + 1)
+    if len(data) > cap:
+        raise Refused(os.path.basename(path) + " is too big")
+    return data
+
+
+def limit(rel):
+    """A part's size limit, or None when a backup never holds it."""
+    if rel in JSON_PARTS:
+        return JSON_PARTS[rel]
+    if THEME_FILE.match(rel) or PICTURE.match(rel):
+        return MAX_PICTURE
+    return None
+
+
+def parts(config):
+    """[(name under config/, full path, size)] of what a backup holds,
+    found without following a link."""
+    out = []
+    for rel in JSON_PARTS:
+        p = os.path.join(config, rel)
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(st.st_mode):
+            out.append((rel, p, st.st_size))
+    for top in ("themes", "app-pictures"):
+        base = os.path.join(config, top)
+        if not real_dir(base):
+            continue
+        for e in sorted(os.scandir(base), key=lambda e: e.name):
+            if e.is_file(follow_symlinks=False):
+                rel = top + "/" + e.name
+                if limit(rel):
+                    out.append((rel, e.path, e.stat(follow_symlinks=False).st_size))
+            elif top == "themes" and e.is_dir(follow_symlinks=False):
+                for f in sorted(os.scandir(e.path), key=lambda f: f.name):
+                    rel = "themes/" + e.name + "/" + f.name
+                    if f.is_file(follow_symlinks=False) and limit(rel):
+                        out.append((rel, f.path, f.stat(follow_symlinks=False).st_size))
+            if len(out) > MAX_ENTRIES:
+                raise Refused("there are too many files to back up")
+    return out
+
+
+# ---- backup ----
+
+def backup(version):
+    if not VERSION.match(version):
+        raise Refused("that isn't a version")
+    config = roots()["config"]
+    if not real_dir(config):
+        raise Refused("there's nothing to back up yet")
+    found = parts(config)
+    if not any(rel == "channels.json" or rel == "settings.json" for rel, _, _ in found):
+        raise Refused("there's nothing to back up yet")
+    total = 0
+    for rel, _, size in found:
+        if size > limit(rel):
+            raise Refused(rel + " is too big to back up")
+        total += size
+    if total > MAX_TOTAL:
+        raise Refused("it's too big to back up")
+    folder = backups_folder()
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    if not real_dir(folder):
+        raise Refused(folder + " isn't a folder")
+    fd, part = tempfile.mkstemp(prefix=".uber-tv-backup-", suffix=".part", dir=folder)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as out:
+            with tarfile.open(fileobj=out, mode="w:gz") as tar:
+                manifest = json.dumps({"format": FORMAT, "version": version, "made": int(time.time()),
+                                       "parts": [rel for rel, _, _ in found]}).encode()
+                info = tarfile.TarInfo(MANIFEST)
+                info.size, info.mode, info.mtime = len(manifest), 0o600, int(time.time())
+                tar.addfile(info, io.BytesIO(manifest))
+                for rel, path, _ in found:
+                    src = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                    with os.fdopen(src, "rb") as f:
+                        st = os.fstat(f.fileno())
+                        if not stat.S_ISREG(st.st_mode) or st.st_size > limit(rel):
+                            raise Refused(rel + " changed while it was backed up")
+                        info = tarfile.TarInfo("config/" + rel)
+                        info.size, info.mode, info.mtime = st.st_size, 0o600, int(st.st_mtime)
+                        tar.addfile(info, f)
+            out.flush()
+            os.fsync(out.fileno())
+        for _ in range(3):
+            name = time.strftime("uber-tv-backup-%Y-%m-%d-%H%M%S.tar.gz")
+            final = os.path.join(folder, name)
+            if not os.path.lexists(final):
+                os.rename(part, final)
+                part = None
+                return {"ok": True, "file": final, "size": os.lstat(final).st_size}
+            time.sleep(1)
+        raise Refused("a backup with that name is already there")
+    finally:
+        if part:
+            try:
+                os.unlink(part)
+            except OSError:
+                pass
+
+
+# ---- list ----
+
+def made(name):
+    m = NAME.match(name)
+    return int(time.mktime(tuple(int(x) for x in m.groups()) + (0, 0, -1))) if m else 0
+
+
+def listing():
+    folder = backups_folder()
+    out = []
+    if real_dir(folder):
+        for e in os.scandir(folder):
+            if NAME.match(e.name) and e.is_file(follow_symlinks=False):
+                out.append({"file": e.name, "made": made(e.name), "size": e.stat(follow_symlinks=False).st_size})
+                if len(out) > MAX_BACKUPS:
+                    break
+    out.sort(key=lambda b: b["file"], reverse=True)
+    return {"ok": True, "folder": folder, "backups": out[:MAX_BACKUPS]}
+
+
+# ---- restore ----
+
+def staged_json(path, cap):
+    try:
+        value = json.loads(read_bounded(path, cap).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise Refused("the backup's " + os.path.basename(path) + " doesn't read")
+    if not isinstance(value, (dict, list)):
+        raise Refused("the backup's " + os.path.basename(path) + " doesn't read")
+    return value
+
+
+def unpack(archive, staging):
+    """The backup's parts, checked as they're read, written into staging."""
+    seen, total, manifest = 0, 0, None
+    fd = os.open(archive, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as raw:
+        if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+            raise Refused("that isn't a backup file")
+        try:
+            with tarfile.open(fileobj=raw, mode="r:gz") as tar:
+                while True:
+                    m = tar.next()
+                    if m is None:
+                        break
+                    seen += 1
+                    if seen > MAX_ENTRIES:
+                        raise Refused("the backup holds too many files")
+                    if not m.isreg():
+                        raise Refused("the backup holds something that isn't a file")
+                    if m.name == MANIFEST:
+                        if m.size > 64 << 10:
+                            raise Refused("that isn't an Uber TV backup")
+                        try:
+                            manifest = json.loads(tar.extractfile(m).read(m.size + 1).decode("utf-8"))
+                        except (ValueError, UnicodeDecodeError):
+                            raise Refused("that isn't an Uber TV backup")
+                        continue
+                    rel = m.name[len("config/"):] if m.name.startswith("config/") else ""
+                    cap = limit(rel)
+                    if cap is None:
+                        raise Refused("the backup holds a file it shouldn't: " + m.name[:80])
+                    if m.size > cap:
+                        raise Refused("the backup's " + rel + " is too big")
+                    total += m.size
+                    if total > MAX_TOTAL:
+                        raise Refused("the backup is too big")
+                    dest = os.path.join(staging, rel)
+                    parent = os.path.dirname(dest)
+                    if not os.path.isdir(parent):
+                        os.makedirs(parent, mode=0o700)
+                    src = tar.extractfile(m)
+                    out = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+                    with os.fdopen(out, "wb") as f:
+                        left = m.size
+                        while left > 0:
+                            chunk = src.read(min(left, 1 << 20))
+                            if not chunk:
+                                raise Refused("the backup is cut short")
+                            f.write(chunk)
+                            left -= len(chunk)
+        except FileExistsError:
+            raise Refused("the backup holds a file twice")
+        except (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile):
+            raise Refused("that isn't a backup file Uber TV can read")
+    if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
+        raise Refused("that isn't an Uber TV backup")
+    for rel, cap in JSON_PARTS.items():
+        if os.path.lexists(os.path.join(staging, rel)):
+            staged_json(os.path.join(staging, rel), cap)
+    if not os.path.lexists(os.path.join(staging, "channels.json")) and not os.path.lexists(os.path.join(staging, "settings.json")):
+        raise Refused("the backup holds no channels or settings")
+
+
+def keep_remote(staging, config):
+    """The phone remote's settings stay as they are here."""
+    path = os.path.join(staging, "settings.json")
+    if not os.path.lexists(path):
+        return
+    settings = staged_json(path, JSON_PARTS["settings.json"])
+    if not isinstance(settings, dict):
+        raise Refused("the backup's settings.json doesn't read")
+    here = None
+    try:
+        here = json.loads(read_bounded(os.path.join(config, "settings.json"), JSON_PARTS["settings.json"]).decode("utf-8"))
+    except (OSError, Refused, ValueError, UnicodeDecodeError):
+        here = None
+    if isinstance(here, dict) and isinstance(here.get("remote"), dict):
+        settings["remote"] = here["remote"]
+    else:
+        settings.pop("remote", None)
+    data = (json.dumps(settings) + "\n").encode()
+    tmp = path + ".new"
+    out = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    with os.fdopen(out, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def restore(name):
+    if not NAME.match(name):
+        raise Refused("that isn't a backup's name")
+    archive = os.path.join(backups_folder(), name)
+    config = roots()["config"]
+    if not real_dir(config):
+        os.makedirs(config, mode=0o700, exist_ok=True)
+        if not real_dir(config):
+            raise Refused(config + " isn't a folder")
+    parent = os.path.dirname(config)
+    staging = tempfile.mkdtemp(prefix=".om-pg-restore-", dir=parent)
+    old = tempfile.mkdtemp(prefix=".om-pg-restore-was-", dir=parent)
+    swapped = []
+    keep_old = False      # your files couldn't all go back: they stay where they were moved
+    try:
+        unpack(archive, staging)
+        keep_remote(staging, config)
+        for item in ("channels.json", "settings.json", "library.json", "history.json", "themes", "app-pictures"):
+            new = os.path.join(staging, item)
+            if not os.path.lexists(new):
+                continue
+            here = os.path.join(config, item)
+            had = os.path.lexists(here)
+            if had:
+                os.rename(here, os.path.join(old, item))
+            swapped.append((item, had))
+            os.rename(new, here)
+        return {"ok": True}
+    except BaseException:
+        # what was swapped goes back, newest first (the last may be only half done)
+        for item, had in reversed(swapped):
+            here = os.path.join(config, item)
+            was = os.path.join(old, item)
+            try:
+                if had and os.path.lexists(was):
+                    if os.path.lexists(here):
+                        os.rename(here, os.path.join(staging, item + ".restored"))
+                    os.rename(was, here)
+                elif not had and os.path.lexists(here):
+                    os.rename(here, os.path.join(staging, item + ".restored"))
+            except OSError:
+                keep_old = True
+        if keep_old:
+            raise Refused("the restore stopped partway and some of your files couldn't be put back; they're in " + old)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        if not keep_old:
+            shutil.rmtree(old, ignore_errors=True)
+
+
+# ---- reset ----
+
+def writable_then_retry(func, path, exc):
+    """rmtree's error handler: an app's files are installed read-only, so
+    the folder holding one is made writable (yours) and it's tried again."""
+    parent = os.path.dirname(path)
+    try:
+        st = os.lstat(parent)
+        if stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid():
+            os.chmod(parent, stat.S_IMODE(st.st_mode) | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRUSR)
+        st = os.lstat(path)
+        if stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid():
+            os.chmod(path, stat.S_IMODE(st.st_mode) | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRUSR)
+        func(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise exc
+
+
+def reset():
+    r = roots()
+    order = [r["data"], r["cache"], r["config"]]
+    for path in order:
+        if os.path.islink(path):
+            raise Refused(path + " is a link, so it isn't reset")
+        if os.path.basename(path) != "om-pg" or not path.startswith("/") or os.path.realpath(path) == os.path.realpath(home()):
+            raise Refused("that isn't Uber TV's folder")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    moved = []
+    try:
+        for path in order:
+            if not os.path.lexists(path):
+                continue
+            aside = tempfile.mkdtemp(prefix="om-pg.reset-" + stamp + "-", dir=os.path.dirname(path))
+            os.rmdir(aside)                  # a name of its own, beside it
+            os.rename(path, aside)
+            moved.append((path, aside))
+            os.mkdir(path, 0o700)
+    except OSError:
+        for path, aside in reversed(moved):
+            try:
+                if os.path.lexists(path):
+                    os.rmdir(path)
+                os.rename(aside, path)
+            except OSError:
+                pass
+        raise
+    left = []
+    for _, aside in moved:
+        try:
+            shutil.rmtree(aside, onexc=writable_then_retry)
+        except OSError:
+            left.append(aside)
+    return {"ok": True, "left": left}
+
+
+def main(argv):
+    cmd = argv[0] if argv else ""
+    want = {"backup": 2, "list": 1, "restore": 2, "reset": 1}
+    if want.get(cmd) != len(argv):
+        say({"ok": False, "error": "usage: om-pg-backup backup <version> | list | restore <backup file name> | reset"})
+        return 2
+    try:
+        if cmd == "backup":
+            say(backup(argv[1]))
+        elif cmd == "list":
+            say(listing())
+        elif cmd == "restore":
+            say(restore(argv[1]))
+        else:
+            say(reset())
+    except Refused as e:
+        say({"ok": False, "error": str(e)})
+    except OSError as e:
+        say({"ok": False, "error": (e.strerror or "it couldn't be done") + (": " + os.path.basename(e.filename) if e.filename else "")})
+    except Exception:
+        say({"ok": False, "error": "it couldn't be done"})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

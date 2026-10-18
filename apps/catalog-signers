@@ -1,0 +1,8 @@
+# The keys the guide trusts to sign the Uber TV catalog (ssh-keygen -Y verify,
+# namespace and principal uber-tv-catalog): the one it's signed with, and a
+# spare kept offline, to sign with if the first is lost. Their private halves
+# are kept by the catalog's maintainer, never in this folder. A key that's
+# stolen comes out of this file; apps installed under it are installed again
+# from the catalog signed with the other.
+uber-tv-catalog namespaces="uber-tv-catalog" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEyC91RodQnemZVulBkIPS9aAyojpsSmBzqLXR0sd6rY uber-tv-catalog
+uber-tv-catalog namespaces="uber-tv-catalog" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIByfwRApkVCk83RRLsah4pkiGqsuSfFe61xFo8bcZsLQ uber-tv-catalog-spare

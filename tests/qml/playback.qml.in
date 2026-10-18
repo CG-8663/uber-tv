@@ -1,0 +1,155 @@
+import QtQuick
+import QtTest
+import "file:@ROOT@"
+
+// Filled in and run by tests/appplayback.test.py (not by qmltestrunner on
+// this folder: it needs the media server that script starts).
+Item {
+  id: root
+  width: 320
+  height: 240
+
+  QtObject {
+    id: rt
+    property string phase: "ready"
+    property var calls: []
+    property var leases: ({})
+    property var closed: []
+    property var answerPlaybackFailed: null      // what playbackFailed answers: { kind, value } or null (never)
+    property var terminalAnswer: true             // answer the last call (false: leave it to the 5 s)
+    function call(method, args, done) {
+      rt.calls = rt.calls.concat([{ method: method, args: args, done: done }])
+      if (method === "playback" && (args.state !== "stopped" || rt.terminalAnswer)) Qt.callLater(function() { done("ok", true) })
+      if (method === "playbackFailed" && rt.answerPlaybackFailed) { var a = rt.answerPlaybackFailed; Qt.callLater(function() { done(a.kind, a.value) }) }
+      return rt.calls.length
+    }
+    property var cancelled: []
+    function cancel(id) { rt.cancelled = rt.cancelled.concat([id]) }
+    function lease(name, on) { var l = {}; for (var k in rt.leases) l[k] = true; if (on) l[name] = true; else delete l[name]; rt.leases = l }
+    function closeRelay(handle) { rt.closed = rt.closed.concat([handle]) }
+    function states() { return rt.calls.filter(function(c) { return c.method === "playback" }).map(function(c) { return c.args.state }) }
+  }
+
+  QtObject {
+    id: guide
+    property bool muted: true
+    property bool appPlaying: false
+    property int turnedOff: 0
+    property string ended: ""
+    property var apps: ({ record: function() { return null } })
+    function turnOff() { guide.turnedOff++ }
+    function appPlaybackEnded(id, error) { guide.ended = error || "ok" }
+  }
+
+  AppPlayback { id: pb; guide: guide }
+
+  function play(name, handle) {
+    return { url: "@BASE@" + name, title: "Test", subtitle: "", startAt: 0, live: false, session: handle || "s1" }
+  }
+
+  TestCase {
+    name: "AppPlayback"
+    when: windowShown
+
+    function init() {
+      rt.calls = []
+      rt.cancelled = []
+      rt.leases = ({})
+      rt.closed = []
+      rt.answerPlaybackFailed = null
+      rt.terminalAnswer = true
+      guide.ended = ""
+    }
+
+    function test_1_play_then_stop_in_order() {
+      pb.start("tv.example.app", rt, play("media.mp4"))
+      verify(pb.active)
+      compare(guide.turnedOff, 1, "the TV ended first")
+      verify(rt.leases.playback === true)
+      tryVerify(function() { return rt.states().indexOf("started") >= 0 }, 15000, "the app heard it start")
+      var first = pb.player
+      verify(first !== null)
+      pb.close("user", null)
+      verify(pb.closing)
+      tryVerify(function() { return !pb.active }, 8000, "finalized")
+      var st = rt.states()
+      compare(st[st.length - 1], "stopped")
+      compare(st.filter(function(s) { return s === "stopped" }).length, 1, "one terminal call")
+      compare(rt.calls[rt.calls.length - 1].args.reason, "user")
+      compare(rt.closed, ["s1"], "its relay ids closed")
+      verify(rt.leases.playback !== true, "the lease given back")
+      compare(pb.player, null, "the player destroyed")
+      compare(guide.appPlaying, false)
+    }
+
+    function test_2_fallback_then_second_failure() {
+      rt.answerPlaybackFailed = { kind: "play", value: play("broken.mp4", "s2b") }
+      pb.start("tv.example.app", rt, play("broken.mp4", "s2"))
+      tryVerify(function() { return rt.calls.some(function(c) { return c.method === "playbackFailed" }) }, 15000, "one playbackFailed")
+      tryVerify(function() { return !pb.active }, 20000, "the fallback failed too: it ended")
+      compare(rt.calls.filter(function(c) { return c.method === "playbackFailed" }).length, 1, "only one fallback is asked for")
+      verify(guide.ended !== "ok" && guide.ended !== "", "it says why: " + guide.ended)
+      compare(rt.closed, ["s2b"])
+    }
+
+    function test_3_late_fallback_dropped() {
+      pb.start("tv.example.app", rt, play("broken.mp4", "s3"))
+      tryVerify(function() { return rt.calls.some(function(c) { return c.method === "playbackFailed" }) }, 15000)
+      var late = rt.calls.filter(function(c) { return c.method === "playbackFailed" })[0]
+      pb.close("user", null)
+      tryVerify(function() { return !pb.active }, 8000)
+      verify(rt.cancelled.indexOf(rt.calls.indexOf(late) + 1) >= 0, "closing called the fallback off")
+      late.done("play", play("media.mp4", "s3late"))      // answers after the session closed
+      wait(500)
+      verify(!pb.active, "a late fallback doesn't start anything")
+    }
+
+    function test_4_unanswered_terminal_call() {
+      rt.terminalAnswer = false
+      pb.start("tv.example.app", rt, play("media.mp4", "s4"))
+      tryVerify(function() { return rt.states().indexOf("started") >= 0 }, 15000)
+      var t0 = Date.now()
+      var after = false
+      pb.close("removed", function() { after = true })
+      tryVerify(function() { return after }, 9000, "what waited ran after the 5 s")
+      verify(Date.now() - t0 >= 4500, "it waited for the last call's 5 s")
+      var term = rt.calls.filter(function(c) { return c.method === "playback" && c.args.state === "stopped" })[0]
+      verify(rt.cancelled.indexOf(rt.calls.indexOf(term) + 1) >= 0, "then called it off (its requests with it)")
+      compare(pb.player, null)
+      compare(rt.closed, ["s4"])
+    }
+
+    function test_6_a_stop_supersedes_a_replacement() {
+      pb.start("tv.example.app", rt, play("media.mp4", "s7"))
+      tryVerify(function() { return rt.states().indexOf("started") >= 0 }, 15000)
+      pb.start("tv.example.app", rt, play("media.mp4", "s8"))    // queued behind the close
+      pb.close("removed", null)                                    // then the app is removed
+      tryVerify(function() { return !pb.active }, 10000)
+      wait(800)
+      verify(!pb.active, "the replacement never starts against an app being removed")
+      verify(rt.closed.indexOf("s8") >= 0, "and the relay session its app opened for it is closed")
+    }
+
+    function test_7_a_newer_play_drops_the_one_waiting() {
+      pb.start("tv.example.app", rt, play("media.mp4", "s9"))
+      tryVerify(function() { return rt.states().indexOf("started") >= 0 }, 15000)
+      pb.start("tv.example.app", rt, play("media.mp4", "s10"))   // queued behind the close
+      pb.start("tv.example.app", rt, play("media.mp4", "s11"))   // and a newer one before it starts
+      verify(rt.closed.indexOf("s10") >= 0, "the one that waited won't play: its relay session is closed at once")
+      tryVerify(function() { return pb.active && pb.session.handle === "s11" }, 10000, "the newest plays")
+      pb.close("user", null)
+      tryVerify(function() { return !pb.active }, 10000)
+    }
+
+    function test_5_replacement_waits_for_finalize() {
+      pb.start("tv.example.app", rt, play("media.mp4", "s5"))
+      tryVerify(function() { return rt.states().indexOf("started") >= 0 }, 15000)
+      pb.start("tv.example.app", rt, play("media.mp4", "s6"))   // a new play: the old one closes first
+      tryVerify(function() { return rt.closed.indexOf("s5") >= 0 && pb.active && pb.session.handle === "s6" }, 10000)
+      var reasons = rt.calls.filter(function(c) { return c.method === "playback" && c.args.state === "stopped" }).map(function(c) { return c.args.reason })
+      compare(reasons, ["replaced"])
+      pb.close("user", null)
+      tryVerify(function() { return !pb.active }, 8000)
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "marcho78.om-pg",
+  "name": "Uber TV",
+  "version": "0.2.0-beta",
+  "author": "marcho78",
+  "description": "A unified media center for Omarchy: YouTube, IPTV, EPG, On Demand Videos and Apps. Press Super+Alt+T (or click the TV in the top bar) to open it.",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Guide.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Uber TV",
+    "description": "The TV guide. Click to open or close it.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

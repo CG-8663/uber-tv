@@ -1,0 +1,534 @@
+{
+  "name": "Aperture",
+  "description": "A cinematic broadcast package in graphite, warm ivory and illuminated amber. Original sculptural titanium artwork, a floating channel banner and a full-screen aperture tuning ident.",
+  "colors": {
+    "text": "#f4efe6",
+    "textDim": "#b5b8b8",
+    "accent": "#ffb454",
+    "timeline": "#91ded0",
+    "cell": "#ec151c21",
+    "cellBorder": "#303b42",
+    "channelCell": "#f00e151a",
+    "selected": "#ffb454",
+    "selectedText": "#16110a",
+    "header": "#de0b1116",
+    "headerText": "#e6ddd0",
+    "band": "#d00b1116",
+    "bandText": "#ffca83",
+    "infoPanel": "#00000000",
+    "preview": "#070a0c",
+    "alert": "#ff816f",
+    "bgTop": "#080b0d",
+    "bgBottom": "#080b0d",
+    "ltBg": "#f20c1217",
+    "ltBorder": "#936738",
+    "ltNumber": "#ffb454",
+    "ltChannel": "#ffd59a",
+    "ltTitle": "#fff8ed",
+    "ltProgress": "#ffb454",
+    "ltTrack": "#364047",
+    "ltClock": "#fff8ed",
+    "ltTime": "#c9c6be",
+    "cardBackdrop": "#f5080b0d",
+    "cardName": "#fff4e5",
+    "cardStatus": "#ffca83",
+    "cardFrame": "#8b6236",
+    "boxBg": "#11181d",
+    "boxBorder": "#75603f",
+    "scrim": "#dc05080b",
+    "keyFace": "#202a31",
+    "keyText": "#f4efe6",
+    "keyEdge": "#3b484f",
+    "miniBar": "#f00b1116"
+  },
+  "images": {
+    "masthead": {
+      "src": "masthead.jpg",
+      "fit": "fit",
+      "opacity": 1
+    },
+    "header": {
+      "src": "header.jpg",
+      "fit": "stretch",
+      "opacity": 0.22
+    },
+    "band": {
+      "src": "band.jpg",
+      "fit": "stretch",
+      "opacity": 0.18
+    },
+    "lt": {
+      "src": "lt.jpg",
+      "fit": "stretch",
+      "opacity": 0.48
+    },
+    "card": {
+      "src": "card.jpg",
+      "fit": "fill",
+      "opacity": 1
+    },
+    "box": {
+      "src": "box.jpg",
+      "fit": "fill",
+      "opacity": 0.14
+    }
+  },
+  "fonts": {
+    "body": "Adwaita Sans",
+    "display": "Adwaita Sans",
+    "mono": "JetBrainsMono Nerd Font"
+  },
+  "layout": {
+    "list": "grid",
+    "masthead": "title",
+    "titleDate": false,
+    "clock": "masthead",
+    "hours24": false,
+    "info": true,
+    "infoHeight": 16,
+    "preview": "left",
+    "previewTag": true,
+    "infoProgress": true,
+    "upNext": 2,
+    "dividers": true,
+    "hours": 1.5,
+    "rowHeight": 3.25,
+    "gap": 0.27,
+    "channelWidth": 17,
+    "timeBarHeight": 2.4,
+    "bandHeight": 2,
+    "channelCell": "row",
+    "footer": "keys"
+  },
+  "elements": {
+    "title": {
+      "text": {
+        "font": "display",
+        "size": 2,
+        "weight": "bold",
+        "letterSpacing": 0.2
+      }
+    },
+    "showing": {
+      "text": {
+        "font": "mono",
+        "size": 0.7,
+        "color": "textDim",
+        "letterSpacing": 0.09
+      }
+    },
+    "clock": {
+      "text": {
+        "font": "display",
+        "size": 1.65,
+        "weight": "semibold",
+        "color": "text"
+      }
+    },
+    "infoArea": {
+      "fill": "none",
+      "border": {
+        "width": 0
+      }
+    },
+    "preview": {
+      "radius": 0.55,
+      "border": {
+        "width": "1px",
+        "color": "#866439"
+      },
+      "shadow": {
+        "color": "#a0000000",
+        "blur": 1.3,
+        "x": 0,
+        "y": 0.35
+      }
+    },
+    "previewTag": {
+      "fill": "#eb0b1116",
+      "radius": 0.2,
+      "padding": 0.3,
+      "text": {
+        "font": "mono",
+        "size": 0.62,
+        "color": "#ffd59a",
+        "letterSpacing": 0.07
+      }
+    },
+    "infoPanel": {
+      "fill": {
+        "from": "#eb0a1014",
+        "to": "#a8080b0d",
+        "direction": "right"
+      },
+      "radius": 0.55,
+      "border": {
+        "width": 0
+      },
+      "padding": 0.9
+    },
+    "infoChannel": {
+      "text": {
+        "font": "mono",
+        "size": 0.83,
+        "color": "accent",
+        "case": "upper",
+        "letterSpacing": 0.08,
+        "weight": "medium"
+      }
+    },
+    "infoTitle": {
+      "text": {
+        "font": "display",
+        "size": 2.8,
+        "color": "text",
+        "weight": "bold",
+        "case": "none"
+      }
+    },
+    "infoTime": {
+      "text": {
+        "size": 0.87,
+        "color": "textDim",
+        "case": "none"
+      }
+    },
+    "infoProgress": {
+      "fill": "accent",
+      "track": "#303b42",
+      "height": 0.22,
+      "radius": 0.11,
+      "width": 0.55
+    },
+    "upNextLabel": {
+      "text": {
+        "font": "mono",
+        "size": 0.7,
+        "color": "accent",
+        "letterSpacing": 0.15
+      }
+    },
+    "infoNext": {
+      "text": {
+        "size": 0.92,
+        "color": "text",
+        "case": "none"
+      }
+    },
+    "infoNext:later": {
+      "text": {
+        "color": "textDim"
+      }
+    },
+    "divider": {
+      "height": "1px",
+      "color": "#50554739"
+    },
+    "timeBar": {
+      "radius": 0.3,
+      "border": {
+        "width": "1px",
+        "color": "#514738"
+      },
+      "text": {
+        "font": "mono",
+        "size": 0.83,
+        "weight": "medium",
+        "case": "none"
+      }
+    },
+    "band": {
+      "radius": 0.2,
+      "border": {
+        "width": 0
+      },
+      "padding": 0.55,
+      "text": {
+        "font": "mono",
+        "size": 0.76,
+        "letterSpacing": 0.14,
+        "weight": "medium",
+        "case": "upper"
+      }
+    },
+    "channelCell": {
+      "radius": 0.32,
+      "border": {
+        "width": "1px",
+        "color": "#2c3940"
+      },
+      "padding": 0.65
+    },
+    "channelCell:current": {
+      "fill": "#2a251e",
+      "border": {
+        "width": "1px",
+        "color": "#ac7c42"
+      }
+    },
+    "channelCell:marked": {
+      "fill": "#253734"
+    },
+    "channelNumber": {
+      "text": {
+        "font": "mono",
+        "color": "accent",
+        "size": 1.03,
+        "weight": "medium"
+      }
+    },
+    "channelName": {
+      "text": {
+        "font": "body",
+        "color": "text",
+        "case": "none",
+        "size": 0.98,
+        "weight": "semibold"
+      }
+    },
+    "logoBadge": {
+      "radius": 0.23,
+      "fill": "#20292e",
+      "border": {
+        "width": 0
+      },
+      "text": {
+        "color": "#f4efe6",
+        "size": 0.82
+      }
+    },
+    "programCell": {
+      "radius": 0.32,
+      "border": {
+        "width": "1px",
+        "color": "cellBorder"
+      },
+      "padding": 0.75,
+      "text": {
+        "size": 1.06,
+        "weight": "medium",
+        "case": "none"
+      }
+    },
+    "programCell:selected": {
+      "fill": {
+        "from": "#ffd38d",
+        "to": "#f2a748",
+        "direction": "right"
+      },
+      "border": {
+        "width": "1px",
+        "color": "#ffe2ad"
+      },
+      "shadow": {
+        "color": "#35ffb454",
+        "blur": 0.8,
+        "x": 0,
+        "y": 0.1
+      },
+      "text": {
+        "color": "selectedText",
+        "weight": "bold"
+      }
+    },
+    "liveTag": {
+      "text": {
+        "font": "mono",
+        "size": 0.78,
+        "case": "upper",
+        "weight": "medium"
+      }
+    },
+    "nowLine": {
+      "style": "tick",
+      "color": "timeline",
+      "width": "3px"
+    },
+    "footer": {
+      "fill": "#dc080e12",
+      "radius": 0.25,
+      "border": {
+        "width": 0
+      }
+    },
+    "keycap": {
+      "radius": 0.2,
+      "depth": 0,
+      "border": {
+        "width": "1px",
+        "color": "keyEdge"
+      },
+      "text": {
+        "weight": "semibold"
+      }
+    },
+    "keyLabel": {
+      "text": {
+        "case": "none",
+        "weight": "normal",
+        "color": "textDim"
+      }
+    },
+    "box": {
+      "radius": 0.7,
+      "border": {
+        "width": "1px",
+        "color": "boxBorder"
+      },
+      "shadow": {
+        "color": "#bd000000",
+        "blur": 2,
+        "x": 0,
+        "y": 0.5
+      }
+    },
+    "boxTitle": {
+      "text": {
+        "font": "display",
+        "case": "none",
+        "color": "accent",
+        "weight": "bold"
+      }
+    },
+    "boxText": {
+      "text": {
+        "color": "textDim",
+        "case": "none"
+      }
+    },
+    "listRow:current": {
+      "radius": 0.3,
+      "fill": "selected"
+    },
+    "input": {
+      "radius": 0.3,
+      "fill": "#10171b",
+      "border": {
+        "width": "1px",
+        "color": "#3b494f"
+      }
+    },
+    "input:focused": {
+      "border": {
+        "width": "1px",
+        "color": "accent"
+      }
+    },
+    "lowerThird": {
+      "shape": "rect",
+      "radius": [
+        0.55,
+        0.55,
+        0.55,
+        0.55
+      ],
+      "width": 0.86,
+      "align": "center",
+      "height": 8,
+      "margin": 2.6,
+      "padding": 1.7,
+      "border": {
+        "width": "1px",
+        "color": "#8e683e"
+      },
+      "shadow": {
+        "color": "#d9000000",
+        "blur": 2,
+        "x": 0,
+        "y": 0.6
+      }
+    },
+    "ltNumber": {
+      "text": {
+        "font": "display",
+        "size": 4.7,
+        "weight": "bold",
+        "color": "ltNumber"
+      }
+    },
+    "ltChannel": {
+      "text": {
+        "font": "mono",
+        "size": 0.88,
+        "weight": "medium",
+        "case": "upper",
+        "letterSpacing": 0.1
+      }
+    },
+    "ltTitle": {
+      "text": {
+        "font": "display",
+        "size": 1.65,
+        "weight": "semibold",
+        "case": "none"
+      }
+    },
+    "ltProgress": {
+      "height": 0.22,
+      "radius": 0.11,
+      "track": "ltTrack",
+      "fill": "ltProgress"
+    },
+    "ltClock": {
+      "text": {
+        "font": "display",
+        "size": 1.6,
+        "weight": "semibold"
+      }
+    },
+    "ltTime": {
+      "text": {
+        "font": "mono",
+        "size": 0.7,
+        "color": "ltTime"
+      }
+    },
+    "card": {
+      "fill": "cardBackdrop"
+    },
+    "cardName": {
+      "text": {
+        "font": "display",
+        "size": 2.35,
+        "case": "none",
+        "weight": "semibold",
+        "color": "cardName"
+      }
+    },
+    "cardStatus": {
+      "text": {
+        "font": "mono",
+        "size": 0.85,
+        "case": "upper",
+        "letterSpacing": 0.24,
+        "weight": "medium",
+        "color": "cardStatus"
+      }
+    },
+    "cardFrame": {
+      "radius": 1,
+      "fill": "#cc10171d",
+      "border": {
+        "width": "1px",
+        "color": "cardFrame"
+      },
+      "text": {
+        "color": "accent",
+        "weight": "bold"
+      }
+    }
+  },
+  "background": {
+    "mode": "image",
+    "image": "background.jpg",
+    "dim": 0.23
+  },
+  "lowerThird": {
+    "show": true,
+    "seconds": 8
+  },
+  "card": {
+    "show": true,
+    "seconds": 2.2
+  }
+}

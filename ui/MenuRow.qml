@@ -1,0 +1,144 @@
+import QtQuick
+import "../Look.js" as Look
+
+// A setting, TV style (Settings and the Customize panels): a big row with
+// its name, maybe an icon, and at its right a switch, its value (‹ › round
+// it when ← → change it), or › when it opens something. The focused one
+// lights up and grows a little. Styled by menuRow, menuValue and toggle.
+Item {
+  id: row
+
+  required property var guide
+  property real u: guide.u
+  property real size: 1               // the panels' rows are a little smaller
+  property string label: ""
+  property string icon: ""
+  property string value: ""
+  property string kind: "value"       // switch, choice, opens, action, info, value
+  property bool on: false
+  property bool focused: false
+  property bool danger: false         // removes or clears something
+  property bool dim: false            // can't be used just now
+  property bool more: false           // a switch that also opens something (›)
+  property bool oneClick: false       // a click acts at once: a double-click's second press is ignored
+  signal activated()
+
+  readonly property real unit: u * size
+  readonly property var st: focused ? guide.look["menuRow:focused"] : guide.look.menuRow
+  readonly property var vst: focused ? guide.look["menuValue:focused"] : guide.look.menuValue
+  readonly property var sw: on ? guide.look["toggle:on"] : guide.look.toggle
+  readonly property color ink: dim && !focused ? guide.dimInk : (st.text ? st.text.color : "white")
+  readonly property color valueInk: danger && !focused ? guide.colors.alert : (vst.text ? vst.text.color : "white")
+
+  implicitHeight: Math.round(Look.px(guide.look.menuRow.height, unit))
+
+  Box {
+    id: face
+    anchors.fill: parent
+    // room at the sides to grow into
+    anchors.leftMargin: Math.ceil(row.width * 0.03)
+    anchors.rightMargin: Math.ceil(row.width * 0.03)
+    s: row.st
+    unit: row.unit
+    scale: 1 + (Number(row.st.grow) || 0)
+    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+    Icon {
+      id: picture
+      visible: row.icon !== ""
+      x: face.padding
+      anchors.verticalCenter: parent.verticalCenter
+      name: row.icon
+      size: Math.round(row.unit * 1.5)
+      stroke: 2
+      color: row.ink
+    }
+    Label {
+      anchors.left: picture.visible ? picture.right : parent.left
+      anchors.leftMargin: picture.visible ? row.unit * 0.9 : face.padding
+      anchors.right: right.left
+      anchors.rightMargin: row.unit
+      anchors.verticalCenter: parent.verticalCenter
+      text: row.label
+      s: row.st
+      unit: row.unit
+      color: row.ink
+      elide: Text.ElideRight
+    }
+
+    Row {
+      id: right
+      anchors.right: parent.right
+      anchors.rightMargin: face.padding
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: row.unit * 0.6
+      Label {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.kind === "choice" && row.focused
+        text: "‹"
+        s: row.vst
+        unit: row.unit
+        sizeFactor: 1.3
+        color: row.valueInk
+      }
+      Label {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: text !== ""
+        width: Math.min(implicitWidth, face.width * 0.5)
+        text: row.value
+        s: row.vst
+        unit: row.unit
+        color: row.valueInk
+        elide: Text.ElideMiddle
+      }
+      Label {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.kind === "opens" || (row.kind === "choice" && row.focused)
+        text: "›"
+        s: row.vst
+        unit: row.unit
+        sizeFactor: 1.3
+        color: row.valueInk
+      }
+      // the switch
+      Box {
+        id: toggle
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.kind === "switch"
+        width: Math.round(Look.px(row.sw.width, row.unit))
+        height: Math.round(Look.px(row.sw.height, row.unit))
+        s: row.sw
+        unit: row.unit
+        Rectangle {
+          readonly property real gap: Math.max(2, Math.round(toggle.height * 0.14))
+          width: toggle.height - gap * 2
+          height: width
+          radius: width / 2
+          y: gap
+          x: row.on ? toggle.width - width - gap : gap
+          color: row.sw.knob || "white"
+          Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        }
+      }
+      Label {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.more
+        text: "›"
+        s: row.vst
+        unit: row.unit
+        sizeFactor: 1.3
+        color: row.valueInk
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: row.activated()
+      // the second press of a double-click is a second click, except where
+      // one click acts (so a switch doesn't flip back, and a row that asks
+      // twice isn't answered by a double-click)
+      onDoubleClicked: if (!row.oneClick) row.activated()
+    }
+  }
+}

@@ -1,0 +1,922 @@
+[
+  {
+    "name": "Bob Ross",
+    "url": "https://www.youtube.com/@bobross_thejoyofpainting/videos"
+  },
+  {
+    "name": "Kurzgesagt",
+    "url": "https://www.youtube.com/@kurzgesagt/videos"
+  },
+  {
+    "name": "Tiny Desk",
+    "url": "https://www.youtube.com/@nprmusic/videos"
+  },
+  {
+    "name": "TED",
+    "url": "https://www.youtube.com/@TED/videos"
+  },
+  {
+    "name": "Space Time",
+    "url": "https://www.youtube.com/@pbsspacetime/videos"
+  },
+  {
+    "name": "DDD.",
+    "url": "https://www.youtube.com/@ddddot_music/videos",
+    "liveId": "Il-ZpBuC8tA"
+  },
+  {
+    "name": "Sky News",
+    "url": "https://www.youtube.com/@SkyNews/videos",
+    "category": "News"
+  },
+  {
+    "name": "ABC News",
+    "url": "https://www.youtube.com/@ABCNews/videos",
+    "category": "News"
+  },
+  {
+    "name": "NBC News",
+    "url": "https://www.youtube.com/@NBCNews/videos",
+    "category": "News"
+  },
+  {
+    "name": "CBS News",
+    "url": "https://www.youtube.com/@CBSNews/videos",
+    "category": "News"
+  },
+  {
+    "name": "Al Jazeera English",
+    "url": "https://www.youtube.com/@aljazeeraenglish/videos",
+    "category": "News"
+  },
+  {
+    "name": "DW News",
+    "url": "https://www.youtube.com/@dwnews/videos",
+    "category": "News"
+  },
+  {
+    "name": "FRANCE 24 English",
+    "url": "https://www.youtube.com/@France24_en/videos",
+    "category": "News"
+  },
+  {
+    "name": "euronews",
+    "url": "https://www.youtube.com/@euronews/videos",
+    "category": "News"
+  },
+  {
+    "name": "BBC News",
+    "url": "https://www.youtube.com/@BBCNews/videos",
+    "category": "News"
+  },
+  {
+    "name": "CNA",
+    "url": "https://www.youtube.com/@ChannelNewsAsia/videos",
+    "category": "News"
+  },
+  {
+    "name": "NHK WORLD-JAPAN",
+    "url": "https://www.youtube.com/@NHKWORLDJAPAN/videos",
+    "category": "News"
+  },
+  {
+    "name": "ABC News (Australia)",
+    "url": "https://www.youtube.com/@abcnewsaustralia/videos",
+    "category": "News"
+  },
+  {
+    "name": "LiveNOW from FOX",
+    "url": "https://www.youtube.com/@livenowfox/videos",
+    "category": "News"
+  },
+  {
+    "name": "TRT World",
+    "url": "https://www.youtube.com/@trtworld/videos",
+    "category": "News",
+    "liveId": "qBe59l6p_EU"
+  },
+  {
+    "name": "GBNews",
+    "url": "https://www.youtube.com/@GBNewsOnline/videos",
+    "category": "News",
+    "liveId": "f0pXpb_JL8E"
+  },
+  {
+    "name": "TVP WORLD",
+    "url": "https://www.youtube.com/@TVPWorld/videos",
+    "category": "News",
+    "liveId": "tvXWIgsWuK0"
+  },
+  {
+    "name": "FOX 5 New York",
+    "url": "https://www.youtube.com/@FOX5NY/videos",
+    "category": "Local News"
+  },
+  {
+    "name": "ABC7",
+    "url": "https://www.youtube.com/@ABC7/videos",
+    "category": "Local News",
+    "liveId": "s3iVFJoxrYc"
+  },
+  {
+    "name": "Eyewitness News ABC7NY",
+    "url": "https://www.youtube.com/@abc7NY/videos",
+    "category": "Local News",
+    "liveId": "VrhYz4CL70I"
+  },
+  {
+    "name": "WeatherNation",
+    "url": "https://www.youtube.com/@WeatherNation/videos",
+    "category": "Weather"
+  },
+  {
+    "name": "FOX Weather",
+    "url": "https://www.youtube.com/@foxweather/videos",
+    "category": "Weather"
+  },
+  {
+    "name": "Bloomberg Television",
+    "url": "https://www.youtube.com/@markets/videos",
+    "category": "Business"
+  },
+  {
+    "name": "Yahoo Finance",
+    "url": "https://www.youtube.com/@YahooFinance/videos",
+    "category": "Business"
+  },
+  {
+    "name": "CNBC",
+    "url": "https://www.youtube.com/@CNBC/videos",
+    "category": "Business"
+  },
+  {
+    "name": "NASA",
+    "url": "https://www.youtube.com/@NASA/videos",
+    "category": "Space"
+  },
+  {
+    "name": "NASASpaceflight",
+    "url": "https://www.youtube.com/@NASASpaceflight/videos",
+    "category": "Space"
+  },
+  {
+    "name": "Avid Space",
+    "url": "https://www.youtube.com/@LabPadre/videos",
+    "category": "Space"
+  },
+  {
+    "name": "Sen",
+    "url": "https://www.youtube.com/@sen/videos",
+    "category": "Space"
+  },
+  {
+    "name": "Explore Bears",
+    "url": "https://www.youtube.com/@explorebears/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "Explore Oceans",
+    "url": "https://www.youtube.com/@exploreoceans/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "Explore Eagle Nest Cams",
+    "url": "https://www.youtube.com/@explorebirds/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "Monterey Bay Aquarium",
+    "url": "https://www.youtube.com/@MontereyBayAquarium/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "Kitten Academy",
+    "url": "https://www.youtube.com/@KittenAcademy/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "PixCams",
+    "url": "https://www.youtube.com/@PixCams/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "afarTV",
+    "url": "https://www.youtube.com/@afarTV/videos",
+    "category": "Nature"
+  },
+  {
+    "name": "Lofi Girl",
+    "url": "https://www.youtube.com/@LofiGirl/videos",
+    "category": "Music"
+  },
+  {
+    "name": "Chillhop Music",
+    "url": "https://www.youtube.com/@chillhopmusic/videos",
+    "category": "Music"
+  },
+  {
+    "name": "Cafe Music BGM channel",
+    "url": "https://www.youtube.com/@CafeMusicBGMchannel/videos",
+    "category": "Music"
+  },
+  {
+    "name": "The Good Life Radio x Sensual…",
+    "url": "https://www.youtube.com/@TheGoodLifeRadio/videos",
+    "category": "Music"
+  },
+  {
+    "name": "ChillYourMind",
+    "url": "https://www.youtube.com/@ChillYourMind/videos",
+    "category": "Music",
+    "liveId": "UcrtmnGBUjM"
+  },
+  {
+    "name": "lofi geek",
+    "url": "https://www.youtube.com/@lofigeek/videos",
+    "category": "Music",
+    "liveId": "IqBiNn6N2v8"
+  },
+  {
+    "name": "EarthCam",
+    "url": "https://www.youtube.com/@EarthCam/videos",
+    "category": "City Cams"
+  },
+  {
+    "name": "SkylineWebcams",
+    "url": "https://www.youtube.com/@SkylineWebcams/videos",
+    "category": "City Cams"
+  },
+  {
+    "name": "Webcamtaxi",
+    "url": "https://www.youtube.com/@WebcamTaxi/videos",
+    "category": "City Cams"
+  },
+  {
+    "name": "earthTV",
+    "url": "https://www.youtube.com/@earthTV/videos",
+    "category": "City Cams"
+  },
+  {
+    "name": "Virtual Railfan",
+    "url": "https://www.youtube.com/@VirtualRailfan/videos",
+    "category": "Trains & Aviation"
+  },
+  {
+    "name": "BIG JET TV",
+    "url": "https://www.youtube.com/@BigJetTV/videos",
+    "category": "Trains & Aviation"
+  },
+  {
+    "name": "Flightradar24",
+    "url": "https://www.youtube.com/@Flightradar24DotCom/videos",
+    "category": "Trains & Aviation",
+    "liveId": "T_QsY01tIK0"
+  },
+  {
+    "name": "Tehachapi Live Train Cams",
+    "url": "https://www.youtube.com/@TehachapiLiveTrainCam/videos",
+    "category": "Trains & Aviation",
+    "liveId": "8GmYBH2jH5w"
+  },
+  {
+    "name": "Railstream",
+    "url": "https://www.youtube.com/@Railstream/videos",
+    "category": "Trains & Aviation",
+    "liveId": "6jyGe5ymLKk"
+  },
+  {
+    "name": "Mr Bean",
+    "url": "https://www.youtube.com/@MrBean/videos",
+    "category": "Comedy & Classic TV"
+  },
+  {
+    "name": "Dry Bar Comedy",
+    "url": "https://www.youtube.com/@DryBarComedy/videos",
+    "category": "Comedy & Classic TV"
+  },
+  {
+    "name": "Kitchen Nightmares",
+    "url": "https://www.youtube.com/@KitchenNightmares/videos",
+    "category": "Comedy & Classic TV"
+  },
+  {
+    "name": "National Geographic",
+    "url": "https://www.youtube.com/@NatGeo/videos",
+    "category": "Documentary"
+  },
+  {
+    "name": "Discovery",
+    "url": "https://www.youtube.com/@Discovery/videos",
+    "category": "Documentary"
+  },
+  {
+    "name": "Animal Planet",
+    "url": "https://www.youtube.com/@AnimalPlanet/videos",
+    "category": "Documentary"
+  },
+  {
+    "name": "WWE",
+    "url": "https://www.youtube.com/@WWE/videos",
+    "category": "Sports"
+  },
+  {
+    "name": "WWE Vault",
+    "url": "https://www.youtube.com/@WWEVault/videos",
+    "category": "Sports",
+    "liveId": "y19MKDFQvto"
+  },
+  {
+    "name": "Surf Clips TV",
+    "url": "https://www.youtube.com/@SurfClipsTV/videos",
+    "category": "Sports",
+    "liveId": "SWPXiSOQte0"
+  },
+  {
+    "name": "talkSPORT",
+    "url": "https://www.youtube.com/@talkSPORT/videos",
+    "category": "Sports",
+    "liveId": "jvs_i-tVIV4"
+  },
+  {
+    "name": "Dylan Manzo Show Live",
+    "url": "https://www.youtube.com/@DylanManzoShow247/videos",
+    "category": "Sports",
+    "liveId": "g00OEi5RENk"
+  },
+  {
+    "name": "HoopFlix",
+    "url": "https://www.youtube.com/@HoopFlix/videos",
+    "category": "Sports",
+    "liveId": "xIGazTP_UvU"
+  },
+  {
+    "name": "Hustler Casino Live",
+    "url": "https://www.youtube.com/@HustlerCasinoLive/videos",
+    "category": "Poker",
+    "liveId": "AYAHmmQSDQI"
+  },
+  {
+    "name": "Lucky Lady Casino Live",
+    "url": "https://www.youtube.com/@LuckyLadyCasinoLive/videos",
+    "category": "Poker",
+    "liveId": "35Nhb3btoCA"
+  },
+  {
+    "name": "mashed",
+    "url": "https://www.youtube.com/@mashed/videos",
+    "category": "Gaming",
+    "liveId": "1kDgDmLc3Gk"
+  },
+  {
+    "name": "RedGemMusic",
+    "url": "https://www.youtube.com/@RedGemMusic/videos",
+    "category": "Gaming",
+    "liveId": "0GgFugpidwQ"
+  },
+  {
+    "name": "Slackanater_replay",
+    "url": "https://www.youtube.com/@Slackanater_replay/videos",
+    "category": "Gaming",
+    "liveId": "iT1HOtd9biw"
+  },
+  {
+    "name": "Deer and Deer Hunting",
+    "url": "https://www.youtube.com/@DDHONLINE/videos",
+    "category": "Outdoors",
+    "liveId": "IZpmbfPsZ-Y"
+  },
+  {
+    "name": "Belle Starr Marina",
+    "url": "https://www.youtube.com/@bellestarrmarina/videos",
+    "category": "Outdoors",
+    "liveId": "oHb32iIjmJY"
+  },
+  {
+    "name": "SBC-TV",
+    "url": "https://www.youtube.com/@SBC-TV1/videos",
+    "category": "Outdoors",
+    "liveId": "juKUvigAGkc"
+  },
+  {
+    "name": "The Cactus Country",
+    "url": "https://www.youtube.com/@TheCactusCountry/videos",
+    "category": "Outdoors",
+    "liveId": "UG-gLhnRliM"
+  },
+  {
+    "name": "Cedar Pond Campground",
+    "url": "https://www.youtube.com/@CedarPondCampground/videos",
+    "category": "Outdoors",
+    "liveId": "26WZuEb_iXM"
+  },
+  {
+    "name": "Superior Ponds",
+    "url": "https://www.youtube.com/@SuperiorPonds/videos",
+    "category": "Outdoors",
+    "liveId": "OsCIHk8CeUU"
+  },
+  {
+    "name": "Lake Ontario Live Stream —…",
+    "url": "https://www.youtube.com/@LakeOntarioLyndonvilleCam/videos",
+    "category": "Outdoors",
+    "liveId": "EfRB9CfYHSo"
+  },
+  {
+    "name": "Vanlife Volunteers",
+    "url": "https://www.youtube.com/@VanlifeVolunteers/videos",
+    "category": "Outdoors",
+    "liveId": "4--vKmFf6P0"
+  },
+  {
+    "name": "A Cooks Tour with Anthony…",
+    "url": "https://www.youtube.com/@AnthonyBourdainACooksTour/videos",
+    "category": "Cooking & Food",
+    "liveId": "sV5QrjPcZaw"
+  },
+  {
+    "name": "CasaMonika Live",
+    "url": "https://www.youtube.com/@CasaMonikaLive/videos",
+    "category": "Cooking & Food",
+    "liveId": "0DO31Pt7Mog"
+  },
+  {
+    "name": "MrTsKitchen",
+    "url": "https://www.youtube.com/@MrTsKitchen2023/videos",
+    "category": "Cooking & Food",
+    "liveId": "oPa30o2uYiY"
+  },
+  {
+    "name": "HGTV",
+    "url": "https://www.youtube.com/@HGTV/videos",
+    "category": "Home & DIY",
+    "liveId": "ENkf85U_XkM"
+  },
+  {
+    "name": "ft2 Interior Design",
+    "url": "https://www.youtube.com/@ft2interior/videos",
+    "category": "Home & DIY",
+    "liveId": "jxBgVmuNe40"
+  },
+  {
+    "name": "TheMonsterBlog.com",
+    "url": "https://www.youtube.com/@TheMonsterBlog/videos",
+    "category": "Cars & Motorsports",
+    "liveId": "XYlsz0DFbGc"
+  },
+  {
+    "name": "Mopar Bro",
+    "url": "https://www.youtube.com/@moparbro/videos",
+    "category": "Cars & Motorsports",
+    "liveId": "KZKVkx8552A"
+  },
+  {
+    "name": "InsideColtura",
+    "url": "https://www.youtube.com/@InsideColtura/videos",
+    "category": "Cars & Motorsports",
+    "liveId": "wQ7erviRWTA"
+  },
+  {
+    "name": "SHOWME Caribbean",
+    "url": "https://www.youtube.com/@SHOWMECaribbean/videos",
+    "category": "Travel",
+    "liveId": "DEb-RcUMaZo"
+  },
+  {
+    "name": "WALKS and the CITY",
+    "url": "https://www.youtube.com/@WALKS_and_the_CITY/videos",
+    "category": "Travel",
+    "liveId": "6fgJ4tLNNyQ"
+  },
+  {
+    "name": "London Walks",
+    "url": "https://www.youtube.com/@LondonWalksHD/videos",
+    "category": "Travel",
+    "liveId": "qKw3nQgrleM"
+  },
+  {
+    "name": "Trader.Taylor",
+    "url": "https://www.youtube.com/@Trader.Taylor/videos",
+    "category": "Travel",
+    "liveId": "nmrAxNmb2js"
+  },
+  {
+    "name": "CitiesTouch",
+    "url": "https://www.youtube.com/@CitiesTouch/videos",
+    "category": "Travel",
+    "liveId": "ksQngRcDKrM"
+  },
+  {
+    "name": "SGK Walks",
+    "url": "https://www.youtube.com/@SGKwalks/videos",
+    "category": "Travel",
+    "liveId": "Rvn7Z5bwJWE"
+  },
+  {
+    "name": "WDW Today",
+    "url": "https://www.youtube.com/@WDWTodayChannel/videos",
+    "category": "Travel",
+    "liveId": "9aadx4nlBMQ"
+  },
+  {
+    "name": "WorldscapeScenery",
+    "url": "https://www.youtube.com/@WorldscapeScenery/videos",
+    "category": "Travel",
+    "liveId": "beTVjEfh83s"
+  },
+  {
+    "name": "Telchar 3d Printer Foundry",
+    "url": "https://www.youtube.com/@RelayForge-Telchar/videos",
+    "category": "Tech",
+    "liveId": "ARWr81_8yE4"
+  },
+  {
+    "name": "Lava Watchers",
+    "url": "https://www.youtube.com/@LavaWatchers/videos",
+    "category": "Science",
+    "liveId": "ygQ1iv8iZr8"
+  },
+  {
+    "name": "Spaceweathertracker",
+    "url": "https://www.youtube.com/@Spaceweathertracker/videos",
+    "category": "Science",
+    "liveId": "VHvpUxxnlFc"
+  },
+  {
+    "name": "Project RattleCam",
+    "url": "https://www.youtube.com/@projectrattlecam/videos",
+    "category": "Science",
+    "liveId": "Kt2dvBOMFYk"
+  },
+  {
+    "name": "Science Channel",
+    "url": "https://www.youtube.com/@sciencechannel/videos",
+    "category": "Science",
+    "liveId": "zrxsGyAHbuw"
+  },
+  {
+    "name": "Outer Space",
+    "url": "https://www.youtube.com/@outer_space/videos",
+    "category": "Science",
+    "liveId": "b1UIZzbeVAc"
+  },
+  {
+    "name": "Cartoon Network",
+    "url": "https://www.youtube.com/@cartoonnetwork/videos",
+    "category": "Kids & Family",
+    "liveId": "fT1vVg8_B7E"
+  },
+  {
+    "name": "PBS KIDS",
+    "url": "https://www.youtube.com/@PBSKIDS/videos",
+    "category": "Kids & Family",
+    "liveId": "6cOZOElQgdw"
+  },
+  {
+    "name": "Boomerang UK",
+    "url": "https://www.youtube.com/@BoomerangUK/videos",
+    "category": "Kids & Family",
+    "liveId": "GEw3m4xvct4"
+  },
+  {
+    "name": "Scholastic After School",
+    "url": "https://www.youtube.com/@ScholasticAfterSchool/videos",
+    "category": "Kids & Family",
+    "liveId": "u3eXBwN9y_I"
+  },
+  {
+    "name": "Power Rangers Official",
+    "url": "https://www.youtube.com/@PowerRangersOfficial/videos",
+    "category": "Kids & Family",
+    "liveId": "b1vxs3b88kE"
+  },
+  {
+    "name": "Scholastic Classic",
+    "url": "https://www.youtube.com/@ScholasticClassic/videos",
+    "category": "Kids & Family",
+    "liveId": "53eK2GL7hRI"
+  },
+  {
+    "name": "Disney Kids",
+    "url": "https://www.youtube.com/@disneykids/videos",
+    "category": "Kids & Family",
+    "liveId": "npDdbj-A5m4"
+  },
+  {
+    "name": "Adventure Time",
+    "url": "https://www.youtube.com/@AdventureTime/videos",
+    "category": "Kids & Family",
+    "liveId": "tzVQUgIVFSo"
+  },
+  {
+    "name": "Transformers TV",
+    "url": "https://www.youtube.com/@TransformersTVOfficial/videos",
+    "category": "Kids & Family",
+    "liveId": "TV5aNI-7jZg"
+  },
+  {
+    "name": "PAW Patrol Official & Friends",
+    "url": "https://www.youtube.com/@PAWPatrolOfficial/videos",
+    "category": "Kids & Family",
+    "liveId": "qMq0fdF6D8c"
+  },
+  {
+    "name": "Clifford the Big Red Dog •…",
+    "url": "https://www.youtube.com/@CliffordtheBigRedDogClassic/videos",
+    "category": "Kids & Family",
+    "liveId": "iAn1QpPxIYA"
+  },
+  {
+    "name": "Dexter's Laboratory",
+    "url": "https://www.youtube.com/@Official_DextersLaboratory/videos",
+    "category": "Kids & Family",
+    "liveId": "n8tWQnEkyYw"
+  },
+  {
+    "name": "Ed Edd n Eddy",
+    "url": "https://www.youtube.com/@Official_Ed_Edd_n_Eddy/videos",
+    "category": "Kids & Family",
+    "liveId": "QVk52ZF1nsE"
+  },
+  {
+    "name": "Ben and Holly’s Little Kingdom…",
+    "url": "https://www.youtube.com/@BenAndHollyOfficial/videos",
+    "category": "Kids & Family",
+    "liveId": "_CGWCnuVjf4"
+  },
+  {
+    "name": "Gabby's Dollhouse",
+    "url": "https://www.youtube.com/@GabbysDollhouse/videos",
+    "category": "Kids & Family",
+    "liveId": "gxRGdAHvwVA"
+  },
+  {
+    "name": "Oddbods",
+    "url": "https://www.youtube.com/@Oddbods/videos",
+    "category": "Kids & Family",
+    "liveId": "PflvYNR3eUk"
+  },
+  {
+    "name": "Angry Birds",
+    "url": "https://www.youtube.com/@AngryBirds/videos",
+    "category": "Kids & Family",
+    "liveId": "kR0HNnHX8MY"
+  },
+  {
+    "name": "The Carol Burnett Show Official",
+    "url": "https://www.youtube.com/@CarolBurnettShow/videos",
+    "category": "Comedy",
+    "liveId": "PyOJvK58hwM"
+  },
+  {
+    "name": "RedGreenTV",
+    "url": "https://www.youtube.com/@RedGreenTV/videos",
+    "category": "Comedy",
+    "liveId": "5KLfw3Rwx4g"
+  },
+  {
+    "name": "FreeStream Comedy",
+    "url": "https://www.youtube.com/@FreeStream_Comedy/videos",
+    "category": "Comedy",
+    "liveId": "MaM4o2QAABc"
+  },
+  {
+    "name": "Degrassi",
+    "url": "https://www.youtube.com/@Degrassi/videos",
+    "category": "Comedy",
+    "liveId": "KkQ7ebxARvk"
+  },
+  {
+    "name": "TheMostPopularGirls",
+    "url": "https://www.youtube.com/@TheMostPopularGirls/videos",
+    "category": "Comedy",
+    "liveId": "dPv_casU_gs"
+  },
+  {
+    "name": "FreeStream TV",
+    "url": "https://www.youtube.com/@FreeStream_TV/videos",
+    "category": "Retro TV",
+    "liveId": "epG2FR0PtBo"
+  },
+  {
+    "name": "Shout! Studios",
+    "url": "https://www.youtube.com/@ShoutStudios/videos",
+    "category": "Retro TV",
+    "liveId": "nTa6iGUH70A"
+  },
+  {
+    "name": "Cute Avalanche Foster Cat Cam",
+    "url": "https://www.youtube.com/@CuteAvalanche/videos",
+    "category": "Pets",
+    "liveId": "Fj_OaYxUSQw"
+  },
+  {
+    "name": "Ragdoll Drama",
+    "url": "https://www.youtube.com/@Ragdoll_Drama/videos",
+    "category": "Pets",
+    "liveId": "IjPufS5KqIs"
+  },
+  {
+    "name": "HighDesertLabradors",
+    "url": "https://www.youtube.com/@HighDesertLabradors/videos",
+    "category": "Pets",
+    "liveId": "u05wV3y5gq0"
+  },
+  {
+    "name": "Cove Sanctuary",
+    "url": "https://www.youtube.com/@CoveSanctuary/videos",
+    "category": "Pets",
+    "liveId": "X5J9rKV-EmA"
+  },
+  {
+    "name": "Mane Characters Equine Reserve…",
+    "url": "https://www.youtube.com/@ManeCharacters/videos",
+    "category": "Pets",
+    "liveId": "Jvim3EY7euM"
+  },
+  {
+    "name": "Coon Hollow Critter Cam",
+    "url": "https://www.youtube.com/@CoonHollowCritterCam/videos",
+    "category": "Pets",
+    "liveId": "vNbjO0xt7g4"
+  },
+  {
+    "name": "Dateline NBC",
+    "url": "https://www.youtube.com/@DatelineNBC/videos",
+    "category": "True Crime",
+    "liveId": "z0_NKzi57Fo"
+  },
+  {
+    "name": "COPSTV",
+    "url": "https://www.youtube.com/@CopsTV/videos",
+    "category": "True Crime",
+    "liveId": "p28z1Y-Mceg"
+  },
+  {
+    "name": "7 News Spotlight",
+    "url": "https://www.youtube.com/@7newsSpotlight/videos",
+    "category": "True Crime",
+    "liveId": "H95NCCR3O6Y"
+  },
+  {
+    "name": "Real Stories",
+    "url": "https://www.youtube.com/@RealStories/videos",
+    "category": "True Crime",
+    "liveId": "MOstCtztFno"
+  },
+  {
+    "name": "Coast Guard TV",
+    "url": "https://www.youtube.com/@CoastGuardTV/videos",
+    "category": "Reality",
+    "liveId": "6y9APWA5-3g"
+  },
+  {
+    "name": "Operation Repo",
+    "url": "https://www.youtube.com/@OperationRepo/videos",
+    "category": "Reality",
+    "liveId": "H5saqJtPQi4"
+  },
+  {
+    "name": "The Why Files",
+    "url": "https://www.youtube.com/@TheWhyFilesBackstage/videos",
+    "category": "Reality",
+    "liveId": "jygdgmmsGxQ"
+  },
+  {
+    "name": "Joseph Shenouda",
+    "url": "https://www.youtube.com/@JosephShenouda/videos",
+    "category": "Beach Cams",
+    "liveId": "2i12Vv2iWWs"
+  },
+  {
+    "name": "Maui Live Cam",
+    "url": "https://www.youtube.com/@mauilivecam7143/videos",
+    "category": "Beach Cams",
+    "liveId": "RqOhOunra9Y"
+  },
+  {
+    "name": "Sun Tower Hotel & Suites",
+    "url": "https://www.youtube.com/@SunTowerHotelSuites/videos",
+    "category": "Beach Cams",
+    "liveId": "QuzlwFeO7WU"
+  },
+  {
+    "name": "AlohaLiveCam",
+    "url": "https://www.youtube.com/@AlohaLiveCam/videos",
+    "category": "Beach Cams",
+    "liveId": "5cH9Zr9cCvM"
+  },
+  {
+    "name": "Chamberlin Nature",
+    "url": "https://www.youtube.com/@ChamberlinNature/videos",
+    "category": "Beach Cams",
+    "liveId": "iQ7XJDXYSMo"
+  },
+  {
+    "name": "Washington's Evergreen Coast",
+    "url": "https://www.youtube.com/@evergreencoastwa/videos",
+    "category": "Beach Cams",
+    "liveId": "HlepVoxWIMQ"
+  },
+  {
+    "name": "Earth Watch Live",
+    "url": "https://www.youtube.com/@EarthWatchLive1/videos",
+    "category": "Beach Cams",
+    "liveId": "H91O7OQudcc"
+  },
+  {
+    "name": "Party In Key West",
+    "url": "https://www.youtube.com/@partyinkeywest/videos",
+    "category": "Beach Cams",
+    "liveId": "7sq3Fn5yUi8"
+  },
+  {
+    "name": "OnTheSnow",
+    "url": "https://www.youtube.com/@onthesnow/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "KgE-3tr1IUg"
+  },
+  {
+    "name": "VermontLiveCam",
+    "url": "https://www.youtube.com/@VermontLiveCam/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "vvqeNWZyN5g"
+  },
+  {
+    "name": "Colorado Live Cams",
+    "url": "https://www.youtube.com/@ColoradoLiveCams/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "agKVZ1sgMZ4"
+  },
+  {
+    "name": "PCTV Mountain Cam",
+    "url": "https://www.youtube.com/@PCTVMountainCam/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "wZkChlv20hs"
+  },
+  {
+    "name": "Boston and Maine Live",
+    "url": "https://www.youtube.com/@BostonAndMaineLive/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "M0I8-jQAtLA"
+  },
+  {
+    "name": "bsntechdotcom",
+    "url": "https://www.youtube.com/@bsntechdotcom/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "cv5ffQcoa_M"
+  },
+  {
+    "name": "Explore Tennessee with Paul &…",
+    "url": "https://www.youtube.com/@exploretennessee/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "CU5wVS7Dwnc"
+  },
+  {
+    "name": "See Jackson Hole",
+    "url": "https://www.youtube.com/@Seejh/videos",
+    "category": "Ski & Mountain Cams",
+    "liveId": "VrV76oqxvS8"
+  },
+  {
+    "name": "Brooklyn Waterfront Cams",
+    "url": "https://www.youtube.com/@BrooklynWaterfrontCams/videos",
+    "category": "Scenic Cams",
+    "liveId": "VO5PSTr3_L0"
+  },
+  {
+    "name": "Lyngen North",
+    "url": "https://www.youtube.com/@lyngennorth/videos",
+    "category": "Scenic Cams",
+    "liveId": "SwXtDFC9Bro"
+  },
+  {
+    "name": "New York Live Camera",
+    "url": "https://www.youtube.com/@NewYorkLiveCamera/videos",
+    "category": "Scenic Cams",
+    "liveId": "Rv6t7RtxSsw"
+  },
+  {
+    "name": "Grand Harbour Live",
+    "url": "https://www.youtube.com/@GrandHarbourLive/videos",
+    "category": "Scenic Cams",
+    "liveId": "BekT461jypU"
+  },
+  {
+    "name": "Kaleido Lodge Yukon",
+    "url": "https://www.youtube.com/@KaleidoLodgeYukon/videos",
+    "category": "Scenic Cams",
+    "liveId": "0lErLRerKrw"
+  },
+  {
+    "name": "RomNYC",
+    "url": "https://www.youtube.com/@RomNYC/videos",
+    "category": "Scenic Cams",
+    "liveId": "NzKkbwMHLK0"
+  },
+  {
+    "name": "WWLTV",
+    "url": "https://www.youtube.com/@wwltv/videos",
+    "category": "Scenic Cams",
+    "liveId": "E8gy1vwGNsk"
+  }
+]

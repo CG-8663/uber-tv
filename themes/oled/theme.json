@@ -1,0 +1,375 @@
+{
+  "name": "OLED",
+  "description": "Modern and quiet, on near-black: rounded cells, one white highlight, a red now tick.",
+  "fonts": {
+    "body": [
+      "Adwaita Sans",
+      "Inter",
+      "Noto Sans",
+      "sans-serif"
+    ],
+    "display": [
+      "Adwaita Sans",
+      "Inter",
+      "Noto Sans",
+      "sans-serif"
+    ],
+    "mono": [
+      "JetBrainsMono Nerd Font",
+      "Adwaita Mono",
+      "monospace"
+    ]
+  },
+  "colors": {
+    "text": "#f2f2f2",
+    "textDim": "#8a8a8e",
+    "accent": "#f2f2f2",
+    "timeline": "#ff453a",
+    "cell": "#161618",
+    "cellBorder": "#26262a",
+    "channelCell": "#101012",
+    "selected": "#f2f2f2",
+    "selectedText": "#0a0a0a",
+    "header": "#00000000",
+    "headerText": "#d4d4d8",
+    "band": "#00000000",
+    "bandText": "#8a8a8e",
+    "infoPanel": "#00000000",
+    "preview": "#000000",
+    "alert": "#ff453a",
+    "bgTop": "#0b0b0c",
+    "bgBottom": "#060607",
+    "ltBg": "#eb141416",
+    "ltBorder": "#2a2a2e",
+    "ltNumber": "#f2f2f2",
+    "ltChannel": "#8a8a8e",
+    "ltTitle": "#f2f2f2",
+    "ltProgress": "#f2f2f2",
+    "ltTrack": "#2a2a2e",
+    "ltClock": "#f2f2f2",
+    "ltTime": "#8a8a8e",
+    "cardBackdrop": "#e0060607",
+    "cardName": "#f2f2f2",
+    "cardStatus": "#8a8a8e",
+    "cardFrame": "#2a2a2e",
+    "boxBg": "#141416",
+    "boxBorder": "#2a2a2e",
+    "scrim": "#cc060607",
+    "keyFace": "#1e1e21",
+    "keyText": "#e6e6e6",
+    "keyEdge": "#1e1e21",
+    "miniBar": "#eb060607"
+  },
+  "background": {
+    "mode": "none"
+  },
+  "layout": {
+    "masthead": "none",
+    "clock": "info",
+    "previewTag": true,
+    "infoProgress": true,
+    "upNext": 2,
+    "infoHeight": 13.5,
+    "dividers": true,
+    "channelCell": "row",
+    "channelWidth": 13,
+    "rowHeight": 3,
+    "gap": 0.3,
+    "bandHeight": 1.7,
+    "timeBarHeight": 2
+  },
+  "elements": {
+    "clock": {
+      "size": 1.25,
+      "weight": "medium"
+    },
+    "preview": {
+      "radius": 0.6,
+      "border": {
+        "width": "1px",
+        "color": "cellBorder"
+      }
+    },
+    "previewTag": {
+      "fill": "#d9000000",
+      "radius": 0.25,
+      "text": {
+        "size": 0.62
+      }
+    },
+    "infoPanel": {
+      "border": "none",
+      "padding": 0.4
+    },
+    "infoChannel": {
+      "case": "none",
+      "weight": "semibold",
+      "letterSpacing": 0.06
+    },
+    "infoTitle": {
+      "size": 2.5,
+      "weight": "bold"
+    },
+    "infoTime": {
+      "case": "none",
+      "color": "textDim"
+    },
+    "infoProgress": {
+      "fill": "text",
+      "track": "#26262a",
+      "height": 0.32,
+      "radius": 0.2,
+      "width": 0.62
+    },
+    "infoNext": {
+      "color": "text"
+    },
+    "infoNext:later": {
+      "color": "textDim"
+    },
+    "upNextLabel": {
+      "size": 0.78,
+      "letterSpacing": 0.12
+    },
+    "timeBar": {
+      "fill": "none",
+      "text": {
+        "case": "none",
+        "weight": "semibold"
+      }
+    },
+    "band": {
+      "fill": "none",
+      "border": "none",
+      "text": {
+        "case": "none",
+        "size": 0.82,
+        "letterSpacing": 0.12,
+        "weight": "semibold"
+      }
+    },
+    "channelCell": {
+      "radius": 0.45,
+      "border": {
+        "width": "1px",
+        "color": "cellBorder"
+      }
+    },
+    "channelCell:current": {
+      "fill": "#1c1c1f"
+    },
+    "channelNumber": {
+      "color": "textDim",
+      "size": 1,
+      "weight": "medium"
+    },
+    "channelName": {
+      "case": "none",
+      "weight": "semibold",
+      "size": 1
+    },
+    "logoBadge": {
+      "radius": 0.35,
+      "border": "none",
+      "fill": "#232326",
+      "text": {
+        "color": "text",
+        "size": 0.85
+      }
+    },
+    "programCell": {
+      "radius": 0.45,
+      "text": {
+        "size": 1
+      }
+    },
+    "programCell:selected": {
+      "shadow": {
+        "color": "#59ffffff",
+        "blur": 0.7,
+        "y": 0
+      }
+    },
+    "liveTag": {
+      "color": "alert",
+      "case": "upper",
+      "size": 1
+    },
+    "nowLine": {
+      "width": "2px",
+      "style": "tick"
+    },
+    "divider": {
+      "color": "#1f1f22"
+    },
+    "keycap": {
+      "radius": 0.25,
+      "depth": 0,
+      "border": "none"
+    },
+    "keyLabel": {
+      "case": "none",
+      "weight": "normal"
+    },
+    "box": {
+      "radius": 0.8,
+      "border": {
+        "width": "1px",
+        "color": "boxBorder"
+      },
+      "shadow": {
+        "color": "#99000000",
+        "blur": 2,
+        "y": 0.5
+      }
+    },
+    "boxTitle": {
+      "case": "none",
+      "color": "text"
+    },
+    "listRow:current": {
+      "radius": 0.4
+    },
+    "input": {
+      "radius": 0.4
+    },
+    "lowerThird": {
+      "shape": "pill",
+      "width": 0.62,
+      "align": "left",
+      "margin": 2.4,
+      "height": 6,
+      "padding": 2,
+      "shadow": {
+        "color": "#cc000000",
+        "blur": 2,
+        "y": 0.4
+      }
+    },
+    "ltChannel": {
+      "case": "none"
+    },
+    "ltProgress": {
+      "radius": 0.25,
+      "height": 0.35
+    },
+    "cardName": {
+      "case": "none"
+    },
+    "cardStatus": {
+      "case": "none",
+      "weight": "normal"
+    },
+    "cardFrame": {
+      "radius": 1
+    },
+    "homeTile": {
+      "fill": "#cc141416",
+      "border": {
+        "width": "1px",
+        "color": "#26262a"
+      },
+      "radius": 0.8
+    },
+    "homeTile:current": {
+      "fill": "#f2f2f2",
+      "text": {
+        "color": "#0a0a0a"
+      }
+    },
+    "homeCard": {
+      "radius": 0.6
+    },
+    "homeCard:current": {
+      "border": {
+        "width": "2px",
+        "color": "text"
+      }
+    },
+    "posterCard": {
+      "radius": 0.5
+    },
+    "posterCard:current": {
+      "border": {
+        "width": "2px",
+        "color": "text"
+      }
+    },
+    "heroKicker": {
+      "color": "textDim"
+    },
+    "heroTitle": {
+      "weight": "bold",
+      "size": 3.4
+    },
+    "statusChip": {
+      "fill": "#cc141416",
+      "border": {
+        "width": "1px",
+        "color": "#26262a"
+      }
+    },
+    "libraryTab:current": {
+      "color": "text"
+    },
+    "vodBar": {
+      "radius": 1.2,
+      "border": {
+        "width": "1px",
+        "color": "#2a2a2e"
+      }
+    },
+    "vodProgress": {
+      "radius": 0.2,
+      "height": 0.3
+    },
+    "panelHeader": {
+      "color": "textDim"
+    },
+    "menuCategory:focused": {
+      "fill": "#f2f2f2",
+      "text": {
+        "color": "#0a0a0a"
+      }
+    },
+    "menuRow": {
+      "fill": "#cc141416",
+      "border": {
+        "width": "1px",
+        "color": "#26262a"
+      },
+      "radius": 0.8
+    },
+    "menuRow:focused": {
+      "fill": "#f2f2f2",
+      "border": {
+        "color": "#f2f2f2"
+      },
+      "text": {
+        "color": "#0a0a0a"
+      }
+    },
+    "menuValue:focused": {
+      "text": {
+        "color": "#3a3a40"
+      }
+    },
+    "toggle:on": {
+      "fill": "accent",
+      "knob": "#ffffff"
+    },
+    "searchField": {
+      "fill": "#cc141416",
+      "border": {
+        "width": "1px",
+        "color": "#26262a"
+      },
+      "radius": 1.2
+    },
+    "searchField:focused": {
+      "border": {
+        "color": "#f2f2f2"
+      }
+    }
+  }
+}

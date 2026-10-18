@@ -1,0 +1,154 @@
+#!/usr/bin/python3
+"""Finds the videos in a folder for the guide's My Videos, with their length
+and a picture from each.
+
+    om-pg-videos <folder> <cache folder>
+
+Prints JSON, a line at a time: first {"videos": [...]} with every video found
+and what's known of it already, then {"path", "duration", "thumb"} for each
+one as its length and picture are worked out, then {"done": true}. Lengths
+come from ffprobe and pictures from ffmpegthumbnailer (both come with
+Omarchy); they're kept in the cache folder, so a video is looked at once.
+"""
+
+import hashlib
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+EXTENSIONS = {".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".ogv", ".ts", ".m2ts", ".3gp"}
+SKIP = {"node_modules", "__pycache__", "venv", ".git"}
+MAX_VIDEOS = 3000
+MAX_DEPTH = 6
+
+
+def say(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def find(folder):
+    found = []
+    base = len(folder.parts)
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        here = pathlib.Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP) if len(here.parts) - base < MAX_DEPTH else []
+        for name in filenames:
+            if name.startswith(".") or os.path.splitext(name)[1].lower() not in EXTENSIONS:
+                continue
+            path = here / name
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            if st.st_size < 1024:
+                continue
+            found.append((path, st))
+            if len(found) >= MAX_VIDEOS:
+                return found
+    return found
+
+
+def duration_of(path):
+    try:
+        out = subprocess.run(["/usr/bin/ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                             capture_output=True, text=True, timeout=20).stdout.strip()
+        return round(float(out)) if out else 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+def thumb_of(path, out):
+    try:
+        subprocess.run(["/usr/bin/ffmpegthumbnailer", "-i", str(path), "-o", str(out), "-s", "480", "-t", "15%", "-q", "7"],
+                       capture_output=True, timeout=40)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if not out.exists() or out.stat().st_size == 0:
+        return ""
+    os.chmod(out, 0o600)
+    return str(out)
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit("usage: om-pg-videos <folder> <cache folder>")
+    folder = pathlib.Path(os.path.expanduser(sys.argv[1])).resolve()
+    cache = pathlib.Path(sys.argv[2])
+    thumbs = cache / "thumbs"
+    thumbs.mkdir(parents=True, exist_ok=True)
+    os.chmod(thumbs, 0o700)   # pictures from your videos are yours alone
+    known_file = cache / "videos.json"
+    try:
+        known = json.loads(known_file.read_text())
+        if not isinstance(known, dict):
+            known = {}
+    except (OSError, ValueError):
+        known = {}
+
+    if not folder.is_dir():
+        say({"folder": str(folder), "missing": True, "videos": []})
+        say({"done": True})
+        return
+
+    found = find(folder)
+    videos = []
+    todo = []
+    kept = {}
+    for path, st in found:
+        key = str(path)
+        k = known.get(key)
+        same = isinstance(k, dict) and k.get("size") == st.st_size and k.get("mtime") == int(st.st_mtime)
+        thumb = k.get("thumb", "") if same else ""
+        if thumb and not os.path.exists(thumb):
+            thumb = ""
+        entry = {"size": st.st_size, "mtime": int(st.st_mtime), "duration": k.get("duration", 0) if same else 0, "thumb": thumb}
+        kept[key] = entry
+        rel = path.parent.relative_to(folder)
+        videos.append({"path": key, "name": path.stem, "folder": "" if str(rel) == "." else str(rel),
+                       "size": st.st_size, "mtime": entry["mtime"], "duration": entry["duration"], "thumb": thumb})
+        if not same or not entry["duration"] or not thumb:
+            todo.append((path, entry))
+    say({"folder": str(folder), "missing": False, "videos": videos})
+
+    # the newest first, so what you just recorded gets its picture soonest
+    todo.sort(key=lambda t: -t[1]["mtime"])
+    for n, (path, entry) in enumerate(todo):
+        if not entry["duration"]:
+            entry["duration"] = duration_of(path)
+        if not entry["thumb"]:
+            name = hashlib.sha1(f"{path}:{entry['mtime']}".encode()).hexdigest()[:20] + ".jpg"
+            entry["thumb"] = thumb_of(path, thumbs / name)
+        say({"path": str(path), "duration": entry["duration"], "thumb": entry["thumb"]})
+        if n % 10 == 9:
+            save(known_file, kept)
+    # what's known of videos elsewhere (another folder you had) stays while they're there
+    for key, k in known.items():
+        if key not in kept and isinstance(k, dict) and len(kept) < 6000 and os.path.isfile(key):
+            kept[key] = k
+    save(known_file, kept)
+
+    # pictures of videos that are gone
+    wanted = {os.path.basename(e["thumb"]) for e in kept.values() if e.get("thumb")}
+    for old in thumbs.glob("*.jpg"):
+        if old.name not in wanted and str(old).startswith(str(thumbs)):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    say({"done": True})
+
+
+def save(path, data):
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        pass

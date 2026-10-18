@@ -1,0 +1,252 @@
+#!/usr/bin/python3
+"""Whether a newer Uber TV is out, and what's in it.
+
+    om-pg-update check <plugin folder> <installed version>
+    om-pg-update notes <plugin folder> <installed version> [<newer version's tag>]
+
+check asks the git address the plugin was installed from for its version
+tags (git ls-remote: names only, nothing is downloaded) and prints
+{"ok": true, "latest": "0.2.0", "tag": "v0.2.0"}: the newest version tag
+above the installed version, or "" for both when there's none. Tags that
+aren't versions (v1.2.3, or 1.2.3, maybe with a pre-release like -beta.2)
+are ignored, so a plain push is never an update.
+
+notes prints {"ok": true, "notes": Markdown}: given a newer version's tag,
+the CHANGELOG.md sections above the installed version up to it, read from
+that tag (fetched into a private folder that's removed after: one commit,
+and of its files only CHANGELOG.md, where the server allows it); without
+one, the installed version's own section, from the plugin folder.
+
+git runs by its full path, never through a shell, without asking for a
+password (no terminal prompt, ssh in batch mode), with a deadline, and its
+output is read up to a limit. Anything that goes wrong prints
+{"ok": false, "error": "..."}.
+"""
+
+import json
+import os
+import re
+import selectors
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+GIT = "/usr/bin/git"
+VERSION = re.compile(r"^v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:-([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*))?$")
+HEADING = re.compile(r"^## \[([^\]]{1,64})\]")
+MAX_TAGS_OUT = 1024 * 1024        # what ls-remote may print
+MAX_CHANGELOG = 512 * 1024        # CHANGELOG.md's size, read at most
+MAX_NOTES = 200 * 1024            # the notes printed
+TIMEOUT = 25                      # seconds, for each git command
+
+
+def say(obj):
+    print(json.dumps(obj))
+
+
+def parse(text):
+    """A version's parts, or None when it isn't one."""
+    m = VERSION.match(text.strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4))
+
+
+def order(v):
+    """A key that sorts versions as semantic versioning does: a pre-release
+    comes before its release, its parts compared in turn (numbers before
+    words, numbers by value)."""
+    major, minor, patch, pre = v
+    if pre is None:
+        return (major, minor, patch, 1, ())
+    parts = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
+    return (major, minor, patch, 0, parts)
+
+
+def plain(v):
+    return "%d.%d.%d" % v[:3] + ("-" + v[3] if v[3] else "")
+
+
+def newest(names, installed):
+    """The newest version among tag names above installed: (version, tag
+    name), or (None, None)."""
+    best, best_tag = None, None
+    for name in names:
+        v = parse(name)
+        if v and order(v) > order(installed) and (best is None or order(v) > order(best)):
+            best, best_tag = v, name
+    return best, best_tag
+
+
+def tag_names(ls_remote):
+    """Tag names from `git ls-remote --tags --refs` output."""
+    names = []
+    for line in ls_remote.splitlines():
+        ref = line.split("\t", 1)[-1].strip()
+        if ref.startswith("refs/tags/"):
+            names.append(ref[len("refs/tags/"):])
+    return names
+
+
+def sections(changelog):
+    """[(version heading, its Markdown)] in the file's order."""
+    out, name, lines = [], None, []
+    for line in changelog.splitlines():
+        m = HEADING.match(line)
+        if m or line.startswith("## "):
+            if name is not None:
+                out.append((name, "\n".join(lines).strip()))
+            name, lines = (m.group(1) if m else ""), [line]
+        elif name is not None:
+            lines.append(line)
+    if name is not None:
+        out.append((name, "\n".join(lines).strip()))
+    return out
+
+
+def notes_between(changelog, installed, newer):
+    """The sections above installed, up to newer (newest first, as written)."""
+    picked = []
+    for name, text in sections(changelog):
+        v = parse(name)
+        if v and order(installed) < order(v) <= order(newer):
+            picked.append(text)
+    return "\n\n".join(picked)
+
+
+def notes_of(changelog, installed):
+    for name, text in sections(changelog):
+        v = parse(name)
+        if v and order(v) == order(installed):
+            return text
+    return ""
+
+
+def env():
+    e = dict(os.environ)
+    e["GIT_TERMINAL_PROMPT"] = "0"
+    e.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+    e["LC_ALL"] = "C"
+    return e
+
+
+def git(args, cap=64 * 1024):
+    """git's output (text), read as it comes up to cap bytes; raises
+    RuntimeError with why it failed. git leads its own process group, so a
+    deadline or an overrun ends it with anything it started (ssh, a helper)."""
+    try:
+        p = subprocess.Popen([GIT] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=env(), start_new_session=True)
+    except OSError as e:
+        raise RuntimeError("couldn't run git: " + (e.strerror or "it isn't there"))
+    out, err = bytearray(), bytearray()
+    deadline = time.monotonic() + TIMEOUT
+    sel = selectors.DefaultSelector()
+    sel.register(p.stdout, selectors.EVENT_READ, out)
+    sel.register(p.stderr, selectors.EVENT_READ, err)
+    try:
+        while sel.get_map():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise RuntimeError("git took too long")
+            for key, _ in sel.select(left):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    sel.unregister(key.fileobj)
+                elif key.data is out:
+                    out += chunk
+                    if len(out) > cap:
+                        raise RuntimeError("git printed more than %d bytes" % cap)
+                elif len(err) < 4096:
+                    err += chunk[:4096 - len(err)]
+        try:
+            code = p.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("git took too long")
+    finally:
+        if p.poll() is None:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.wait()
+        sel.close()
+        p.stdout.close()
+        p.stderr.close()
+    if code != 0:
+        why = err.decode("utf-8", "replace").strip().splitlines()
+        raise RuntimeError(why[-1][:200] if why else "git exited with %d" % code)
+    return out.decode("utf-8", "replace")
+
+
+def check(folder, installed):
+    names = tag_names(git(["-C", folder, "ls-remote", "--tags", "--refs", "origin"], cap=MAX_TAGS_OUT))
+    v, tag = newest(names, installed)
+    return {"ok": True, "latest": plain(v) if v else "", "tag": tag or ""}
+
+
+def remote_changelog(folder, tag):
+    url = git(["-C", folder, "remote", "get-url", "origin"]).strip()
+    # an address, not an option, and not a transport that runs a command
+    if not url or "\n" in url or url.startswith("-") or url.lower().startswith("ext::"):
+        raise RuntimeError("no address to ask")
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "om-pg")
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    work = tempfile.mkdtemp(prefix="om-pg-notes-", dir=base)
+    try:
+        git(["init", "-q", "--bare", "--", work])
+        git(["-C", work, "remote", "add", "--", "origin", url])
+        ref = "refs/tags/" + tag
+        try:
+            git(["-C", work, "fetch", "-q", "--no-tags", "--depth=1", "--filter=blob:none", "origin", ref])
+        except RuntimeError:
+            # a server that can't leave files out: the one commit, whole
+            git(["-C", work, "fetch", "-q", "--no-tags", "--depth=1", "origin", ref])
+        return git(["-C", work, "show", "FETCH_HEAD:CHANGELOG.md"], cap=MAX_CHANGELOG)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def local_changelog(folder):
+    path = os.path.join(folder, "CHANGELOG.md")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as f:
+        data = f.read(MAX_CHANGELOG + 1)
+    if len(data) > MAX_CHANGELOG:
+        raise RuntimeError("CHANGELOG.md is too big")
+    return data.decode("utf-8", "replace")
+
+
+def notes(folder, installed, tag):
+    """tag: the newer version's tag as check named it (v0.2.0 or 0.2.0)."""
+    if tag:
+        newer = parse(tag)
+        if not newer or order(newer) <= order(installed):
+            raise RuntimeError("that isn't a newer version")
+        text = notes_between(remote_changelog(folder, tag), installed, newer)
+    else:
+        text = notes_of(local_changelog(folder), installed)
+    return {"ok": True, "notes": text[:MAX_NOTES]}
+
+
+def main(argv):
+    if len(argv) < 3 or argv[0] not in ("check", "notes") or (argv[0] == "check" and len(argv) != 3) or len(argv) > 4:
+        say({"ok": False, "error": "usage: om-pg-update check|notes <plugin folder> <installed version> [<newer version's tag>]"})
+        return 2
+    folder = os.path.realpath(argv[1])
+    installed = parse(argv[2])
+    if not os.path.isdir(folder) or installed is None:
+        say({"ok": False, "error": "no plugin folder or version to compare"})
+        return 0
+    try:
+        say(check(folder, installed) if argv[0] == "check" else notes(folder, installed, argv[3] if len(argv) == 4 else ""))
+    except (RuntimeError, OSError) as e:
+        say({"ok": False, "error": str(e) if isinstance(e, RuntimeError) else (e.strerror or "couldn't read it")})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

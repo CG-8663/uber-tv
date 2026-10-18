@@ -1,0 +1,14 @@
+{
+ "requests": [
+  {
+   "method": "GET",
+   "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "bodyFile": "espn-nfl-scoreboard.json",
+   "required": true
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+  "requests": [
+    { "method": "POST", "url": "https://accounts.example.com/login", "status": 200, "json": { "token": "account-token" },
+      "expect": { "body": "{\"username\": \"alex\", \"password\": \"example-password\"}" } },
+    { "method": "GET", "url": "https://accounts.example.com/servers", "status": 200,
+      "expect": { "headers": { "X-Account-Token": "account-token" } },
+      "json": [
+        { "id": "living-room", "name": "Living room", "token": "token-living-room", "addresses": ["https://living-room.example:32400"] },
+        { "id": "office", "name": "Office", "token": "token-office", "addresses": ["http://192.168.1.20:32400", "https://office.example:32400"] }
+      ] },
+    { "method": "GET", "url": "http://192.168.1.20:32400/identity", "status": 200,
+      "expect": { "headers": { "X-Server-Token": "token-office" } }, "json": { "name": "Office" } }
+  ]
+}

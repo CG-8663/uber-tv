@@ -1,0 +1,2705 @@
+#!/usr/bin/python3
+"""The app helper: runs one code app in its sandbox and speaks for it.
+
+    /usr/bin/python3 -I -S -B -u om-pg-apprun run
+    /usr/bin/python3 -I om-pg-apprun try <app folder> [--call METHOD[:JSON]]... [--fixtures F.json]
+        [--live] [--allow-write] [--server URL] [--pin SHA256] [--secrets F.json] [--play] [--json]
+
+run: the guide starts it (inside a systemd user scope of its own) and writes
+one JSON object a line to its stdin, the first an init frame naming the
+app. It starts the app in bubblewrap (no network, no home, nothing writable
+but a 16 MB /tmp), speaks the app protocol with it (apps/sdk/PROTOCOL.md),
+checks everything the app says, and does everything the app may not do
+itself: its requests (only to the hosts and server it was allowed, checked
+before any lookup or connect), its pictures, its storage, its secrets, the
+media it plays (through a relay on 127.0.0.1, so the player never gets a
+link the app chose). It answers the guide with one JSON object a line.
+Closing its stdin stops the app.
+
+try: the same helper, sandbox and checks, for whoever is writing an app (an
+agent, say): the app runs from a throwaway copy with throwaway storage,
+offline unless --live (requests answered only from --fixtures), and its
+screens are printed as text (--json for machines). Secrets come only from a
+mode-0600 file. 60 seconds and 1 MiB of output at most. --play: a play
+result is played through the relay as the guide's player would (its format
+checked, a playlist followed to a segment), and the app hears started,
+progress and stopped.
+"""
+
+import asyncio
+import base64
+import ctypes
+import hashlib
+import importlib.util
+import itertools
+import json
+import os
+import re
+import resource
+import secrets
+import shutil
+import stat
+import sys
+import tempfile
+import time
+from importlib.machinery import SourceFileLoader
+
+PLUGIN = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+BWRAP = "/usr/bin/bwrap"
+PYTHON = "/usr/bin/python3"
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+
+
+def load(name, rel):
+    """One of the guide's own modules, by its path (never from sys.path)"""
+    path = os.path.join(PLUGIN, rel)
+    loader = SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_file_location(name, path, loader=loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+net = load("appnet", "lib/appnet.py")
+blocks = load("appblocks", "lib/appblocks.py")
+apps = load("om_pg_apps", "bin/om-pg-apps")
+media = load("appmedia", "lib/appmedia.py")
+activity = load("appactivity", "lib/appactivity.py")
+
+DEADLINES = {"play": 30.0, "playbackFailed": 30.0, "playback": 10.0, "signOut": 5.0}
+DEFAULT_DEADLINE = 10.0
+GRACE = 5.0                       # past a deadline, then the runtime ends
+MAX_CALLS = 8
+MAX_FETCH_ACTIVE = 4
+MAX_FETCH_QUEUED = 16
+MAX_FETCH_REPLY = 512 * 1024
+MAX_REPLY_HEADERS = 16 * 1024
+MAX_IMAGE = 2 * 1024 * 1024
+STORE_KEYS = 256
+STORE_VALUE = 64 * 1024
+STORE_TOTAL = 4 * 1024 * 1024
+LOG_KEEP = 64 * 1024
+IMAGES_PER_APP = 64 * 1024 * 1024
+IMAGES_TOTAL = 256 * 1024 * 1024
+FLOW_LONGEST = 600.0
+READY_WAIT = 5.0
+TOKEN_RE = re.compile(r"^[0-9a-f]{32}\Z")
+MAX_TOKENS = 4000                 # picture tokens kept; only ones no live view uses are let go
+HARD_TOKENS = 16000               # pinned at most (a guide that never drops: a result past this is refused)
+IMAGE_QUEUE = 64                  # picture fetches waiting at most
+IMAGE_FETCHES = 6                 # at once
+PRIORITY = {"focus": 0, "visible": 1, "rest": 2}
+# api 4's live updates
+UPDATE_MAX = 64 * 1024            # an update, at most
+UPDATE_EVERY = {"screen": 1.0, "rows": 5.0}   # a view's updates at most this often: a screen's, a Home row's
+STREAM_LINE = 16 * 1024
+STREAM_LINES = 20                 # a second
+STREAM_BYTES = 256 * 1024         # a minute
+STREAM_LONGEST = 3600.0
+STREAM_TYPES = ("text/event-stream", "text/plain", "application/x-ndjson")
+# a picture the rules wouldn't fetch (its link), as against one that failed
+REFUSED = {"host", "origin", "private", "path", "query", "url", "method", "server", "redirects", "headers", "pin"}
+
+
+# ---- private files -----------------------------------------------------------
+
+def private_dir(path):
+    """A folder only you can read (0700), never a link"""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if not stat.S_ISDIR(os.lstat(path).st_mode):
+        raise OSError("not a folder: " + path)
+    os.chmod(path, 0o700)
+
+
+def write_private(path, data):
+    """Written whole or not at all (a new file renamed into place), 0600"""
+    private_dir(os.path.dirname(path))
+    tmp = path + ".tmp-" + secrets.token_hex(4)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def read_private(path, limit):
+    """A plain file's bytes (never a link, a pipe or a device), or None"""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = f.read(limit + 1)
+    return data if len(data) <= limit else None
+
+
+def unlink(path):
+    try:
+        if os.path.lexists(path):
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def picture_at(path, limit, touch=False):
+    """A picture file's (width, height), read through its descriptor: never a
+    link, a regular file of at most limit bytes, whose header is a PNG, JPEG
+    or WebP within the guide's limits. None otherwise. touch: its time
+    refreshed, so what's gone longest unused is pruned first"""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        chunks, got = [], 0
+        while got <= limit:
+            b = os.read(fd, min(65536, limit + 1 - got))
+            if not b:
+                break
+            chunks.append(b)
+            got += len(b)
+        data = b"".join(chunks)
+        if len(data) > limit or apps.picture_problem(data):
+            return None
+        if touch:
+            os.utime(fd)
+        _, w, h = apps.image_info(data)
+        return w, h
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def roots(env):
+    """Where everything of an app is kept (the same as the guide's)"""
+    home = env.get("HOME") or "/nonexistent"
+    data = env.get("XDG_DATA_HOME") or home + "/.local/share"
+    config = env.get("XDG_CONFIG_HOME") or home + "/.config"
+    cache = env.get("XDG_CACHE_HOME") or home + "/.cache"
+    state = env.get("XDG_STATE_HOME") or home + "/.local/state"
+    return {"apps": data + "/om-pg/apps", "store": data + "/om-pg/app-store", "secrets": config + "/om-pg/app-secrets",
+            "logs": state + "/om-pg/app-logs", "images": cache + "/om-pg/app-img", "activity": state + "/om-pg/app-activity"}
+
+
+class Bucket:
+    """A rate: rate a second, up to burst at once"""
+
+    def __init__(self, rate, burst):
+        self.rate, self.burst, self.tokens, self.at = rate, burst, float(burst), time.monotonic()
+
+    def take(self, n=1):
+        now = time.monotonic()
+        self.tokens = min(self.burst, self.tokens + (now - self.at) * self.rate)
+        self.at = now
+        if self.tokens >= n:
+            self.tokens -= n
+            return True
+        return False
+
+    def wait(self, n=1):
+        return max(0.01, (n - self.tokens) / self.rate)
+
+
+# ---- storage, secrets, the log ---------------------------------------------
+
+class Store:
+    """An app's key-value storage: the in-memory map is the only source of
+    what's written, at most once a second and when the app stops"""
+
+    def __init__(self, path):
+        self.path = path
+        self.map = {}          # key -> (bytes, server-scoped)
+        self.dirty = False
+        raw = read_private(path, STORE_TOTAL * 2) if path else None
+        if raw:
+            try:
+                d = json.loads(raw.decode("utf-8"))
+                for k, v in d.get("keys", {}).items():
+                    if isinstance(k, str) and 0 < len(k) <= 128 and isinstance(v, dict):
+                        self.map[k] = (base64.b64decode(v.get("v", ""), validate=True), v.get("s") is True)
+            except (ValueError, TypeError, AttributeError):
+                self.map = {}
+            if len(self.map) > STORE_KEYS or self.total() > STORE_TOTAL:
+                self.map = {}
+
+    def total(self):
+        return sum(len(v) for v, _ in self.map.values())
+
+    def put(self, key, value, server):
+        if key not in self.map and len(self.map) >= STORE_KEYS:
+            return "it keeps up to 256 keys"
+        if len(value) > STORE_VALUE:
+            return "a value is up to 64 KB"
+        old = len(self.map[key][0]) if key in self.map else 0
+        if self.total() - old + len(value) > STORE_TOTAL:
+            return "it keeps up to 4 MB"
+        self.map[key] = (value, server)
+        self.dirty = True
+        return ""
+
+    def delete(self, key):
+        if self.map.pop(key, None) is not None:
+            self.dirty = True
+
+    def forget_server(self):
+        for k in [k for k, (_, s) in self.map.items() if s]:
+            del self.map[k]
+            self.dirty = True
+
+    def clear(self):
+        self.map = {}
+        self.dirty = True
+
+    def commit(self):
+        if not self.dirty or not self.path:
+            return
+        self.dirty = False
+        if not self.map:
+            unlink(self.path)
+            return
+        keys = {k: {"v": base64.b64encode(v).decode(), "s": s} for k, (v, s) in self.map.items()}
+        write_private(self.path, json.dumps({"v": 1, "keys": keys}, separators=(",", ":")).encode())
+
+
+SECRET_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,63}\Z")
+
+
+class Secrets:
+    """An app's secrets (~/.config/om-pg/app-secrets/<source>/<id>.json): what
+    you typed in its settings, and what its sign-in kept, good only for the
+    server it signed in to"""
+
+    def __init__(self, path, server, declared=None, signs_in=True, allowed=None, signed_in=None):
+        self.path, self.server, self.signs_in = path, server, signs_in
+        # the secret settings app.json declares now: a secret you typed for a
+        # setting a later version dropped isn't the app's any more
+        self.declared = None if declared is None else set(declared)
+        # what the guide's record says (run mode; None in try): a secret you
+        # typed is the app's only once the guide marked it set, and a
+        # sign-in's values only while the guide has it signed in, or while a
+        # sign-in in this run is keeping them. Whatever a failed or cut-off
+        # clean-up left in the file is never the app's.
+        self.allowed = None if allowed is None else set(allowed)
+        self.signed_in = signed_in
+        self.in_flow = False
+        self.seen = set()     # every value read or written, kept out of the log
+
+    def read(self):
+        if not self.path:
+            return {"user": {}, "signIn": {"server": "", "values": {}}}
+        return apps.read_secrets(self.path)
+
+    def get(self, name):
+        d = self.read()
+        sign = d["signIn"]
+        signed = self.signs_in and (self.signed_in is not False or self.in_flow)
+        v = sign["values"].get(name) if signed and sign["server"] == self.server else None
+        if v is None and (self.declared is None or name in self.declared) and (self.allowed is None or name in self.allowed):
+            v = d["user"].get(name)
+        if v:
+            self.seen.add(v)
+        return v
+
+    def all_values(self):
+        d = self.read()
+        return list(d["user"].values()) + list(d["signIn"]["values"].values())
+
+    def set_sign_in(self, name, value):
+        self.seen.add(value)
+        if not self.path:
+            return ""
+        private_dir(os.path.dirname(self.path))
+        with apps.secrets_locked(self.path):   # read, changed and written whole: see bin/om-pg-apps
+            d = self.read()
+            if d["signIn"]["server"] != self.server:
+                d["signIn"] = {"server": self.server, "values": {}}
+            if name not in d["signIn"]["values"] and len(d["user"]) + len(d["signIn"]["values"]) >= 32:
+                return "an app keeps up to 32 secrets"
+            d["signIn"]["values"][name] = value
+            write_private(self.path, json.dumps(d, separators=(",", ":")).encode())
+        self.in_flow = True
+        return ""
+
+    def forget_sign_in(self):
+        if self.signed_in is not None:
+            self.signed_in = False
+        self.in_flow = False
+        if not self.path or not os.path.isdir(os.path.dirname(self.path)):
+            return
+        with apps.secrets_locked(self.path):
+            d = self.read()
+            if d["signIn"]["values"]:
+                d["signIn"] = {"server": "", "values": {}}
+                write_private(self.path, json.dumps(d, separators=(",", ":")).encode())
+
+
+class Log:
+    """The app's log: its last 64 KB, secrets, Authorization values and the
+    query of every link taken out. sensitive: what must never be in it at
+    any length (a username and password typed to sign in, kept until the app
+    stops): one of 4 characters or more is taken out, and a line holding a
+    shorter one is left out whole"""
+
+    LEFT_OUT = "[a line was left out: it could hold what you typed to sign in]"
+
+    def __init__(self, path, secret_values, echo=None, sensitive=None):
+        self.path, self.secret_values, self.echo = path, secret_values, echo
+        self.sensitive = sensitive if sensitive is not None else set()
+        self.buf = bytearray()
+        old = read_private(path, LOG_KEEP) if path else None
+        if old:
+            self.buf.extend(old)
+        self.dirty = False
+
+    def redact(self, text):
+        for v in self.sensitive:
+            if len(v) < 4 and v in text:
+                return self.LEFT_OUT
+        for v in sorted(set(self.secret_values()) | self.sensitive, key=len, reverse=True):
+            if len(v) >= 4:
+                text = text.replace(v, "[secret]")
+        # an Authorization value whole (its scheme and everything after it:
+        # "Bearer x", "MediaBrowser … Token=x"), quoted or to the end of the line
+        text = re.sub(r"(?i)(authorization\\?[\"']?\s*[:=]\s*)(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\r\n]*)", r"\1[hidden]", text)
+        text = re.sub(r"(?i)(x-emby-token|x-mediabrowser-token|token|password|api[_-]?key)(\\?\"?\s*[:=]\s*\\?\"?)[^\s\"\\,}]+",
+                      r"\1\2[hidden]", text)
+        text = re.sub(r"(https?://[^\s?#\"']+)\?[^\s#\"']*", r"\1?[hidden]", text)
+        return text
+
+    def add(self, text, who="app"):
+        line = self.redact(text.rstrip("\n"))[:8192]
+        if self.echo:
+            self.echo(line)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.buf.extend((stamp + " " + who + ": " + line + "\n").encode("utf-8", "replace"))
+        if len(self.buf) > LOG_KEEP:
+            del self.buf[:len(self.buf) - LOG_KEEP]
+        self.dirty = True
+
+    def flush(self):
+        if self.dirty and self.path:
+            self.dirty = False
+            try:
+                write_private(self.path, bytes(self.buf))
+            except OSError:
+                pass
+
+
+# ---- requests offline (try) ------------------------------------------------
+
+class Fixtures:
+    """The only answers an offline `try` gets: exact method and URL (as made
+    canonical), each optionally expecting headers or a body"""
+
+    def __init__(self, path):
+        self.items = []
+        if not path:
+            return
+        raw = read_private(path, 8 * 1024 * 1024)
+        if raw is None:
+            raise SystemExit("try: can't read the fixtures file (a plain file up to 8 MB)")
+        try:
+            d = json.loads(raw.decode("utf-8"))
+        except ValueError as e:
+            raise SystemExit("try: the fixtures file isn't JSON: " + str(e)[:100])
+        for n, r in enumerate(d.get("requests", []) if isinstance(d, dict) else []):
+            url = str(net.parse_url(r.get("url", "")))
+            if "bodyBase64" in r:
+                body = base64.b64decode(r["bodyBase64"])
+            elif "json" in r:
+                body = json.dumps(r["json"]).encode()
+            elif "bodyFile" in r:
+                p = r["bodyFile"] if r["bodyFile"].startswith("/") else os.path.join(os.path.dirname(os.path.abspath(path)), r["bodyFile"])
+                body = read_private(p, 64 * 1024 * 1024) or b""
+            else:
+                body = str(r.get("body", "")).encode()
+            self.items.append({"n": n + 1, "method": r.get("method", "GET"), "url": url, "status": int(r.get("status", 200)),
+                               "headers": r.get("headers", {}), "body": body, "expect": r.get("expect") or {},
+                               "required": r.get("required", False), "used": 0})
+
+    def answer(self, url, method, headers, body):
+        for f in self.items:
+            if f["method"] == method and f["url"] == str(url):
+                exp = f["expect"]
+                for k, v in (exp.get("headers") or {}).items():
+                    if dict((n.lower(), x) for n, x in headers).get(k.lower()) != v:
+                        raise net.NetError("fixture", "fixture " + str(f["n"]) + " expected header " + k)
+                if "body" in exp and (body or b"").decode("utf-8", "replace") != exp["body"]:
+                    raise net.NetError("fixture", "fixture " + str(f["n"]) + " expected another body")
+                f["used"] += 1
+                return FixtureResponse(f, url, method)
+        raise net.NetError("offline", "offline, and no fixture for " + method + " " + str(url))
+
+    def unused(self):
+        return [f for f in self.items if f["required"] and not f["used"]]
+
+
+class FixtureResponse:
+    def __init__(self, f, url, method):
+        self.status, self.url, self.method = f["status"], url, method
+        self.headers = [(k, str(v)) for k, v in f["headers"].items()]
+        self.data = f["body"] if method != "HEAD" else b""
+        self.length = len(self.data)
+
+    def header(self, name):
+        for k, v in self.headers:
+            if k.lower() == name.lower():
+                return v
+        return None
+
+    async def chunk(self, size=65536):
+        out, self.data = self.data[:size], self.data[size:]
+        return out
+
+    async def body(self, limit):
+        if len(self.data) > limit:
+            raise net.NetError("toobig", "the reply is bigger than " + net.size_words(limit))
+        out, self.data = self.data, b""
+        return out
+
+    def close(self):
+        pass
+
+
+# ---- calls, flows, sessions ------------------------------------------------
+
+class Owner:
+    """What a fetch, storage or secret frame belongs to: a pending call or the
+    sign-in flow, whose time it shares and with which it's cancelled"""
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.tasks = set()
+        self.ended = False
+        self.reserved = False
+
+    def end(self):
+        self.ended = True
+        for t in list(self.tasks):
+            t.cancel()
+
+
+class Call(Owner):
+    def __init__(self, cid, method, args, deadline):
+        super().__init__(deadline)
+        self.id, self.method, self.args = cid, method, args
+        self.timed_out = False
+        self.cancelled = False
+
+
+class ViewOwner(Owner):
+    """A live view on the screen (api 4): what its app fetches while it's on
+    belongs to it (30 s a request), and ends when it goes"""
+
+    def __init__(self, rid):
+        super().__init__(float("inf"))
+        self.id = rid
+
+
+class Flow(Owner):
+    def __init__(self, fid, deadline, how="code"):
+        super().__init__(deadline)
+        self.id = fid
+        self.how = how             # code or password
+        self.given = False         # its username and password, once (password)
+        self.servers = {}          # handle -> its addresses, canonical (an account that lists your servers)
+        self.server = ""           # the one you chose, for this flow
+
+
+# ---- the relay ---------------------------------------------------------------
+
+TYPES = {"mp4": "video/mp4", "fmp4-init": "video/mp4", "fmp4-segment": "video/mp4", "mp3": "audio/mpeg",
+         "aac": "audio/aac", "matroska": "video/x-matroska", "webm": "video/webm", "ts": "video/mp2t",
+         "flac": "audio/flac", "ogg": "audio/ogg", "playlist": "application/vnd.apple.mpegurl",
+         "key": "application/octet-stream"}
+SAFE_EXT = {"ts", "m4s", "mp4", "m4a", "m4v", "aac", "mp3", "ac3", "ec3", "cmfv", "cmfa", "fmp4", "mkv", "webm",
+            "key", "m3u8", "flac", "ogg", "mov"}
+RANGE_RE = re.compile(r"^bytes=([0-9]{1,15})-([0-9]{0,15})\Z")
+CONTENT_RANGE_RE = re.compile(r"^bytes ([0-9]{1,15})-([0-9]{1,15})/([0-9]{1,15}|\*)\Z")
+
+
+class Entry:
+    def __init__(self, session, url, headers, kind, depth):
+        self.session, self.url, self.headers, self.kind, self.depth = session, url, headers, kind, depth
+        self.fmt = None            # the format, once its first bytes were checked
+
+
+class Relay:
+    """Media for the guide's player: http://127.0.0.1:<port>/<128-bit id>/<name>.
+    Each id stands for one upstream URL the helper checked (the play URL, or
+    one a playlist named, rewritten); the player never sees those URLs. Bytes
+    pass only after the format check; playlists are rewritten fail-closed;
+    redirects are followed here, never sent to the player."""
+
+    def __init__(self, rt):
+        self.rt = rt
+        self.entries = {}          # id -> Entry
+        self.by_url = {}           # (session, kind, url) -> id
+        self.sessions = {}         # session -> {"ids": set, "conns": set, "sem": Semaphore, "waiting": int, "context"}
+        self.server = None
+        self.port = 0
+
+    async def start(self):
+        if not self.server:
+            self.server = await asyncio.start_server(self.serve, "127.0.0.1", 0, limit=net.MAX_HEADERS * 2)
+            self.port = self.server.sockets[0].getsockname()[1]
+
+    def open_session(self, context):
+        for s in list(self.sessions):
+            self.close_session(s)     # one playback at a time
+        handle = secrets.token_hex(16)
+        self.sessions[handle] = {"ids": set(), "conns": set(), "sem": asyncio.Semaphore(6), "waiting": 0, "context": context}
+        return handle
+
+    def close_session(self, handle):
+        s = self.sessions.pop(handle, None)
+        if not s:
+            return
+        for i in s["ids"]:
+            e = self.entries.pop(i, None)
+            if e:
+                self.by_url.pop((handle, e.kind, str(e.url)), None)
+        for t in list(s["conns"]):
+            t.cancel()
+
+    def forget_ids(self, session, keep):
+        """The ids a session gained since keep (a set of its ids), dropped"""
+        s = self.sessions.get(session)
+        if not s:
+            return
+        for i in list(s["ids"] - keep):
+            s["ids"].discard(i)
+            e = self.entries.pop(i, None)
+            if e:
+                self.by_url.pop((session, e.kind, str(e.url)), None)
+
+    def add(self, session, url, headers, kind, depth=0):
+        s = self.sessions.get(session)
+        if s is None:
+            raise media.Refused("closed", "the playback was closed")
+        key = (session, kind, str(url))
+        if key in self.by_url:
+            return self.by_url[key]
+        if len(s["ids"]) >= 50000:
+            raise media.Refused("toomany", "the playlist names too many things")
+        i = secrets.token_hex(16)
+        self.entries[i] = Entry(session, url, headers, kind, depth)
+        self.by_url[key] = i
+        s["ids"].add(i)
+        return i
+
+    def link(self, i, kind, url):
+        """The player's address for an id: a name with the upstream file's
+        extension when it's a media one (FFmpeg's HLS reader checks them)"""
+        last = url.path.rsplit("/", 1)[-1]
+        ext = last.rsplit(".", 1)[-1].lower() if "." in last else ""
+        if ext not in SAFE_EXT:
+            ext = {"playlist": "m3u8", "segment": "ts", "map": "mp4", "key": "key", "play": "mp4"}.get(kind, "bin")
+        return "http://127.0.0.1:" + str(self.port) + "/" + i + "/" + ("media" if kind == "play" else kind) + "." + ext
+
+    async def close(self):
+        for s in list(self.sessions):
+            self.close_session(s)
+        if self.server:
+            self.server.close()
+            self.server = None
+
+    async def serve(self, reader, writer):
+        task = asyncio.current_task()
+        entry = None
+        try:
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
+            lines = head.decode("latin-1").split("\r\n")
+            m = re.match(r"^(GET|HEAD) /([0-9a-f]{32})/[A-Za-z0-9._-]{1,40} HTTP/1\.[01]\Z", lines[0])
+            entry = self.entries.get(m.group(2)) if m else None
+            if not entry:
+                await self.reply(writer, 404, [])
+                return
+            sess = self.sessions.get(entry.session)
+            if not sess:
+                await self.reply(writer, 404, [])
+                return
+            sess["conns"].add(task)
+            rng = None
+            for l in lines[1:]:
+                n, _, v = l.partition(":")
+                if n.strip().lower() == "range":
+                    rm = RANGE_RE.match(v.strip())
+                    if not rm:
+                        await self.reply(writer, 416, [])
+                        return
+                    rng = (int(rm.group(1)), int(rm.group(2)) if rm.group(2) else None)
+            if sess["waiting"] >= 32:
+                await self.reply(writer, 503, [])
+                return
+            sess["waiting"] += 1
+            try:
+                await sess["sem"].acquire()
+            finally:
+                sess["waiting"] -= 1
+            try:
+                await self.answer(entry, m.group(1), rng, writer)
+            finally:
+                sess["sem"].release()
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError):
+            pass
+        except (media.Refused, net.NetError) as e:
+            self.rt.log.add("playback: " + str(e), "guide")
+            try:
+                await self.reply(writer, 502, [])
+            except Exception:
+                pass
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if entry and entry.session in self.sessions:
+                self.sessions[entry.session]["conns"].discard(task)
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def reply(self, writer, status, headers, body=b""):
+        words = {200: "OK", 206: "Partial Content", 404: "Not Found", 416: "Range Not Satisfiable", 502: "Bad Gateway",
+                 503: "Service Unavailable"}
+        out = ["HTTP/1.1 " + str(status) + " " + words.get(status, "Error"), "Connection: close", "Cache-Control: no-store"]
+        out += [k + ": " + v for k, v in headers]
+        if status >= 400 or body:
+            out.append("Content-Length: " + str(len(body)))
+        writer.write(("\r\n".join(out) + "\r\n\r\n").encode("latin-1") + body)
+        await writer.drain()
+
+    async def upstream(self, entry, method, rng, deadline):
+        h = list(entry.headers)
+        if rng:
+            h.append(("Range", "bytes=" + str(rng[0]) + "-" + ("" if rng[1] is None else str(rng[1]))))
+        res = await asyncio.wait_for(self.rt.open(str(entry.url), method, h, None, raw_headers=True, what="media"), deadline)
+        if res.status not in (200, 206):
+            res.close()
+            raise net.NetError("status", "the media's server answered " + str(res.status))
+        return res
+
+    async def whole(self, entry, limit):
+        """A playlist or key: all of it, within its own 30 s"""
+        async def get():
+            res = await self.upstream(entry, "GET", None, 30)
+            try:
+                return await res.body(limit), res.url
+            finally:
+                res.close()
+        return await asyncio.wait_for(get(), 30)
+
+    async def answer(self, entry, method, rng, writer):
+        if entry.kind == "play" and entry.fmt is None:
+            await self.classify(entry)
+        if entry.kind == "playlist" or entry.fmt == "playlist":
+            data, final = await self.whole(entry, 1024 * 1024)
+            before = set(self.sessions.get(entry.session, {}).get("ids", ()))
+            try:
+                out = media.rewrite_playlist(data, str(final), entry.depth, lambda u, k: self.child(entry, final, u, k))
+            except BaseException:
+                self.forget_ids(entry.session, before)   # refused part way: none of what it named stays
+                raise
+            await self.reply(writer, 200, [("Content-Type", TYPES["playlist"]), ("Content-Length", str(len(out)))])
+            if method == "GET":
+                writer.write(out)
+                await writer.drain()
+            return
+        if entry.kind == "key":
+            data, _ = await self.whole(entry, 64)
+            media.check_key(data)
+            await self.reply(writer, 200, [("Content-Type", TYPES["key"]), ("Content-Length", "16")])
+            if method == "GET":
+                writer.write(data)
+                await writer.drain()
+            return
+        await self.stream(entry, method, rng, writer)
+
+    def child(self, parent, final, url, kind):
+        u = net.parse_url(url)
+        self.rt.rules.check(u, "GET")
+        if parent.depth >= 1 and kind == "playlist":
+            raise media.Refused("nesting", "a playlist inside a playlist inside a playlist")
+        # a child keeps the play headers only on the play URL's own origin
+        h = parent.headers if u.origin == parent.url.origin else [(n, v) for n, v in parent.headers if n.lower() != "authorization"]
+        i = self.add(parent.session, u, h, kind, parent.depth + (1 if kind == "playlist" else 0))
+        return self.link(i, kind, u)
+
+    async def classify(self, entry):
+        """The play URL's kind: a playlist, or media of an allowed format"""
+        res = await self.upstream(entry, "GET", (0, media.PROBE - 1), 15)
+        try:
+            probe = await self.read_probe(res)
+        finally:
+            res.close()
+        if media.sniff(probe) == "playlist":
+            entry.fmt = "playlist"
+            return
+        entry.fmt = media.check_media("direct", probe, len(probe) < media.PROBE)
+
+    async def read_probe(self, res):
+        buf = bytearray()
+        while len(buf) < media.PROBE:
+            data = await asyncio.wait_for(res.chunk(media.PROBE - len(buf)), 30)
+            if not data:
+                break
+            buf.extend(data)
+        return bytes(buf[:media.PROBE])
+
+    async def stream(self, entry, method, rng, writer):
+        cls = {"play": "direct", "segment": "segment", "map": "map"}[entry.kind]
+        setup = 15 if entry.kind == "play" else 30
+        if entry.fmt is None and rng and rng[0] != 0 and entry.kind == "play":
+            await self.classify(entry)
+        res = await self.upstream(entry, "HEAD" if method == "HEAD" else "GET", rng, setup)
+        try:
+            out = [("Accept-Ranges", "bytes")]
+            if res.status == 206:
+                cr = res.header("content-range") or ""
+                if not CONTENT_RANGE_RE.match(cr):
+                    raise net.NetError("range", "the media's server sent a bad range")
+                out.append(("Content-Range", cr))
+            n = res.length
+            if n is not None:
+                out.append(("Content-Length", str(n)))
+            first = b""
+            if method == "GET" and entry.fmt is None:
+                first = await self.read_probe(res)
+                entry.fmt = media.check_media(cls, first, len(first) < media.PROBE)
+            out.insert(0, ("Content-Type", TYPES.get(entry.fmt or "", "application/octet-stream")))
+            await self.reply(writer, res.status, out)
+            if method == "HEAD":
+                return
+            if first:
+                writer.write(first)
+                await writer.drain()
+            while True:
+                data = await asyncio.wait_for(res.chunk(65536), 30)   # read-idle: 30 s while the player waits
+                if not data:
+                    break
+                writer.write(data)
+                await writer.drain()
+        finally:
+            res.close()
+
+
+# ---- the runtime -------------------------------------------------------------
+
+class Runtime:
+    def __init__(self, cfg, say, echo=None):
+        self.cfg = cfg
+        self.say = say
+        self.loop = asyncio.get_running_loop()
+        self.app_dir = cfg["appDir"]
+        self.files = apps.tree_of(self.app_dir, "a link was put in its files")
+        self.manifest = apps.check_files(self.app_dir, self.files)
+        if self.manifest["kind"] != "app":
+            raise apps.Bad("it isn't an app with code")
+        self.perms = self.manifest["permissions"]
+        self.server = None
+        if self.perms["server"] and cfg.get("server"):
+            self.server = net.normalize_base(cfg["server"])
+        self.first_server = self.server   # what it started with: a server chosen in a sign-in that fails goes back to it
+        self.allow_write = cfg.get("allowWrite", True)
+        self.rules = net.Rules(self.perms["net"], self.server, self.perms.get("netWrite"))
+        self.pin = cfg.get("pin") or ""
+        self.gate = net.Gate(online=cfg.get("online", True))
+        self.resolver = cfg.get("resolver")   # tests only: answers DNS instead of the system
+        self.fixtures = cfg.get("fixtures")
+        self.settings = self.checked_settings(cfg.get("settings") or {})
+        self.store = Store(cfg.get("storePath")) if self.perms["storage"] else None
+        self.secrets = Secrets(cfg.get("secretsPath"), str(self.server) if self.server else "",
+                               [st["key"] for st in self.manifest["settings"] if st["type"] == "secret"],
+                               bool(self.perms["signIn"]), cfg.get("secretsSet"), cfg.get("signedIn"))
+        known = set(self.secrets.all_values())
+        self.sensitive = set()     # every username and password typed to sign in, until it stops
+        self.log = Log(cfg.get("logPath"), lambda: known | self.secrets.seen, echo, self.sensitive)
+        self.image_dir = cfg.get("imageDir")
+        # which sites it contacted (lib/appactivity.py): run mode only
+        self.activity_path = cfg.get("activityPath")
+        self.activity = activity.Activity(read_private(self.activity_path, activity.MAX_FILE * 2)) if self.activity_path else None
+        self.activity_dirty = False
+        self.activity_at = 0.0
+        self.told_refused = False
+        self.relay = Relay(self)
+        self.calls = {}
+        self.gone = {}             # calls that timed out or were cancelled: id -> when
+        self.flow = None
+        self.proc = None
+        self.state = "starting"
+        self.ready = asyncio.Event()
+        self.done = asyncio.Event()
+        self.frames = Bucket(30, 60)
+        self.bytes_in = Bucket(4 * 1024 * 1024, 4 * 1024 * 1024)
+        self.fetch_rate = Bucket(1.0, 20)
+        self.fetch_sem = asyncio.Semaphore(MAX_FETCH_ACTIVE)
+        self.reserved_sem = asyncio.Semaphore(1)
+        self.fetch_count = 0
+        self.image_rate = Bucket(2.0, 200)
+        # picture tokens: each a link the app named, kept while a view the
+        # guide holds uses it (pinned by that view's result id, until the
+        # guide drops it); past MAX_TOKENS, the least recently used of the
+        # others go
+        self.tokens = {}           # token -> {"url", "results": {result ids}, "used"}
+        self.token_of = {}         # canonical URL -> token
+        self.live = {}             # result id (or (result id, row id) for a live view's row) -> {tokens}, until the guide drops it
+        # live views (api 4): a screen that said live, or a Home row; each by
+        # its result id, with its checked value (an update merges into it),
+        # whether the guide has it on the screen, and when it may update next
+        self.views = {}
+        self.stream = None         # the one stream an app may have: {id, view, task}
+        self.stream_wait = 0.0     # no new stream before this (5 s after one ends, then longer)
+        self.stream_backoff = 5.0
+        self.use = 0               # the clock "used" counts on
+        self.assets = {}           # a picture in the package -> {path, w, h}
+        # what the guide wants fetched: each by its demand epoch and
+        # priority; work for an older epoch is dropped before it spends anything
+        self.queue = {}            # token -> {"epoch", "prio", "seq"}
+        self.fetching = {}         # token -> the newest demand epoch wanting it, while it's fetched
+        self.epoch = 0
+        self.seq = 0
+        self.api = self.manifest["api"]
+        # rows app.json makes heroes (api 3): their ten-item cap holds when a
+        # result leaves their layout to app.json
+        self.heroes = frozenset(r["id"] for r in (self.manifest.get("layout") or {}).get("rows", []) if r.get("layout") == "hero")
+        self.sessions = {}         # playback session -> context
+        self.stop_why = ("normal", "")
+        self.tasks = set()
+
+    # ---- settings ----
+    def checked_settings(self, given):
+        out = {}
+        for s in self.manifest["settings"]:
+            k, kind, v = s["key"], s["type"], given.get(s["key"])
+            if kind == "secret":
+                continue
+            if kind == "switch":
+                out[k] = v is True
+            elif kind == "choice":
+                out[k] = v if v in s["choices"] else s["choices"][0]
+            else:
+                out[k] = v[:200] if isinstance(v, str) and not net.controls(v) else ""
+        return out
+
+    # ---- talking ----
+    def spawn(self, coro):
+        t = asyncio.ensure_future(coro)
+        self.tasks.add(t)
+        t.add_done_callback(self.tasks.discard)
+        return t
+
+    def to_app(self, frame):
+        p = self.proc
+        if not p or p.stdin is None or p.stdin.is_closing():
+            return
+        try:
+            data = blocks.dumps(frame).encode()
+        except UnicodeEncodeError:   # text that isn't Unicode goes as \u escapes, never stopping the sender
+            data = json.dumps(frame, separators=(",", ":"), allow_nan=False).encode()
+        try:
+            p.stdin.write(data + b"\n")
+        except (BrokenPipeError, ConnectionError, RuntimeError):
+            return
+        if p.stdin.transport.get_write_buffer_size() > 8 * 1024 * 1024:
+            self.spawn(self.stop("violation", "it stopped reading what the guide sends it"))
+
+    # ---- starting ----
+    def scope_env(self):
+        """Only what systemd-run needs to reach your user manager (bwrap
+        clears it all for the app)"""
+        return {k: os.environ[k] for k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS") if os.environ.get(k)}
+
+    def sandbox(self):
+        scope = []
+        if self.cfg.get("scope"):
+            # try: the same limits the guide's scope has (the guide puts the
+            # whole helper in one; try, the sandbox it starts)
+            scope = [SYSTEMD_RUN, "--user", "--scope", "--quiet", "--unit=" + self.cfg["scope"],
+                     "-p", "MemoryMax=320M", "-p", "MemorySwapMax=0", "-p", "CPUQuota=50%", "-p", "TasksMax=48", "--"]
+        return scope + [BWRAP, "--unshare-all", "--unshare-user", "--disable-userns", "--assert-userns-disabled",
+                "--die-with-parent", "--new-session",
+                "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib", "/lib64",
+                "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev",
+                "--size", "16777216", "--tmpfs", "/tmp",
+                "--ro-bind", self.app_dir, "/app", "--ro-bind", os.path.join(PLUGIN, "apps", "sdk"), "/sdk",
+                "--clearenv", "--setenv", "HOME", "/tmp", "--setenv", "LANG", "C.UTF-8",
+                "--setenv", "UBER_TV_MAIN", self.manifest["main"], "--chdir", "/app",
+                PYTHON, "-I", "-S", "-B", "-u", "/sdk/launch.py"]
+
+    async def start(self):
+        for prog in (BWRAP, PYTHON) + ((SYSTEMD_RUN,) if self.cfg.get("scope") else ()):
+            if not os.access(prog, os.X_OK):
+                await self.stop("unavailable", (prog + " isn't installed, so apps with code can't run on this system"))
+                return False
+        try:
+            self.proc = await asyncio.create_subprocess_exec(
+                *self.sandbox(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=self.scope_env() if self.cfg.get("scope") else {},
+                limit=blocks.MAX_LINE + 1, close_fds=True)
+        except OSError as e:
+            await self.stop("unavailable", "the sandbox couldn't start (" + (e.strerror or str(e)) + ")")
+            return False
+        self.spawn(self.read_app())
+        self.spawn(self.read_errors())
+        self.spawn(self.tick())
+        self.to_app({"t": "hello", "api": self.api, "gen": self.cfg.get("gen", 1), "locale": self.cfg.get("locale") or "en-US",
+                     "settings": self.settings, "server": str(self.server) if self.server else None})
+        try:
+            await asyncio.wait_for(self.ready.wait(), READY_WAIT)
+        except asyncio.TimeoutError:
+            if self.state == "starting":
+                await self.stop("start", "it didn't say it was ready within 5 seconds")
+            return False
+        return self.state == "ready"
+
+    # ---- the app's frames ----
+    async def read_app(self):
+        r = self.proc.stdout
+        while True:
+            try:
+                line = await r.readuntil(b"\n")
+            except asyncio.IncompleteReadError as e:
+                if e.partial and self.state not in ("stopping", "stopped"):
+                    await self.stop("violation", "it ended in the middle of a frame")
+                break
+            except asyncio.LimitOverrunError:
+                await self.stop("violation", "a frame is longer than 1 MiB")
+                return
+            except (ConnectionError, ValueError):
+                break
+            if self.state in ("stopping", "stopped"):
+                continue
+            if not self.frames.take() or not self.bytes_in.take(len(line)):
+                await self.stop("violation", "it sent frames faster than 30 a second or 4 MB a second")
+                return
+            try:
+                f = blocks.parse_frame(line[:-1])
+                t = blocks.check_frame(f)
+                if self.state == "starting" and t not in ("ready", "log"):
+                    raise blocks.Violation("it sent " + t + " before ready")
+                await self.handle(t, f)
+            except blocks.Violation as e:
+                await self.stop("violation", str(e))
+                return
+        if self.state not in ("stopping", "stopped"):
+            code = await self.proc.wait()
+            await self.stop("crash", "it stopped by itself (exit code " + str(code) + ")")
+
+    async def read_errors(self):
+        r = self.proc.stderr
+        while True:
+            try:
+                line = await r.readline()
+            except (ValueError, asyncio.LimitOverrunError):
+                line = await r.read(65536)
+            except ConnectionError:
+                break
+            if not line:
+                break
+            self.log.add(line.decode("utf-8", "replace"))
+
+    async def handle(self, t, f):
+        if t == "ready":
+            if self.state != "starting":
+                raise blocks.Violation("it said ready twice")
+            self.state = "ready"
+            self.ready.set()
+            self.say({"t": "state", "state": "ready"})
+        elif t == "log":
+            self.log.add(f["text"])
+        elif t == "result":
+            await self.on_result(f)
+        elif t == "fetch":
+            self.on_fetch(f)
+        elif t in ("storeGet", "storePut", "storeDel", "storeList"):
+            self.on_store(t, f)
+        elif t == "secretGet":
+            self.on_secret_get(f)
+        elif t == "secretSet":
+            self.on_secret_set(f)
+        elif t == "signInCode":
+            self.on_code(f)
+        elif t == "signInDone":
+            self.on_sign_in_done(f)
+        elif t == "signInServers":
+            self.on_servers(f)
+        elif t == "update":
+            self.on_update(f)
+        elif t == "stream":
+            self.on_stream(f)
+        elif t == "streamClose":
+            if self.stream and self.stream["id"] == f["id"]:
+                self.close_stream(self.stream["view"], "")
+
+    def owner(self, f):
+        """The call or flow a frame belongs to, or (None, why)"""
+        if "parent" in f:
+            c = self.calls.get(f["parent"])
+            if not c or c.ended or c.timed_out or c.cancelled:
+                return None, ("cancelled", "the call it belongs to is over")
+            return c, None
+        if "view" in f:
+            v = self.views.get(f["view"])
+            if not v or not v["on"] or v["owner"].ended:
+                return None, ("view", "that view isn't on the screen")
+            return v["owner"], None
+        fl = self.flow
+        if not fl or fl.id != f["flow"] or fl.ended:
+            return None, ("flow", "that sign-in is over")
+        return fl, None
+
+    # ---- results ----
+    async def on_result(self, f):
+        cid = f["id"]
+        c = self.calls.get(cid)
+        if c is None:
+            if cid in self.gone:
+                return   # it timed out or was cancelled: dropped
+            raise blocks.Violation("it answered a call it wasn't given")
+        del self.calls[cid]
+        c.end()
+        if c.timed_out or c.cancelled:
+            return
+        try:
+            made, used = {}, set()
+            kind, value = blocks.result(c.method, f, lambda ref, where: self.image_for(ref, where, made, used), self.api, self.heroes)
+            if kind == "play":
+                value = await self.play(value)
+            if self.api >= 4 and ((kind == "screen" and value.get("live")) or (kind == "rows" and c.method == "homeRow")):
+                # live: each of its rows holds its own pictures, so an update
+                # replacing a row lets go of only that row's
+                self.pin_tokens(cid, made, used, self.row_tokens(cid, kind, value))
+                self.views[cid] = {"method": c.method, "args": c.args, "kind": kind, "value": value, "on": False, "next": 0.0,
+                                   "owner": ViewOwner(cid)}
+            else:
+                self.pin_tokens(cid, made, used)
+        except (blocks.Invalid, net.NetError, media.Refused) as e:
+            self.log.add("its answer to " + c.method + " was refused: " + str(e), "guide")
+            kind, value = "error", {"code": "invalid", "text": str(e)[:200]}
+        except Exception as e:
+            # a check that failed some other way still answers the call, and the
+            # reader goes on (one bad answer never leaves the view waiting)
+            self.log.add("its answer to " + c.method + " couldn't be checked (" + type(e).__name__ + ")", "guide")
+            kind, value = "error", {"code": "invalid", "text": "its answer couldn't be checked"}
+        self.say({"t": "result", "id": cid, "kind": kind, "value": value})
+
+    def image_for(self, ref, where, made, used):
+        """A picture a result names: one in the package ({path, w, h}), or a
+        link, as a token. A result's tokens are one transaction: new ones
+        are made only once the whole result is good (pin_tokens())."""
+        if "asset" in ref:
+            return self.asset(ref["asset"], where)
+        try:
+            url, _ = self.rules.parse(ref["url"], "GET")
+        except net.NetError as e:
+            raise blocks.Invalid(where + ": " + str(e))
+        key = str(url)
+        tok = self.token_of.get(key) or made.get(key)
+        if not tok:
+            tok = made[key] = secrets.token_hex(16)
+        used.add(tok)
+        return {"token": tok}
+
+    def asset(self, a, where):
+        """A picture in the app's package, with its size from its header"""
+        if a not in self.assets:
+            if a not in self.files or os.path.splitext(a)[1].lower() not in apps.IMAGES:
+                raise blocks.Invalid(where + " isn't a picture in the app")
+            path = os.path.join(self.app_dir, a)
+            info = picture_at(path, apps.MAX_ICON)
+            if not info:
+                raise blocks.Invalid(where + " isn't a picture in the app")
+            self.assets[a] = {"path": path, "w": info[0], "h": info[1]}
+        return dict(self.assets[a])
+
+    def pin_tokens(self, rid, made, used, by_row=None, releasing=()):
+        """A result's tokens, made and pinned to it together (nothing can be
+        let go between its being checked and kept); then the least recently
+        used of those no result holds go, past MAX_TOKENS. by_row: a live
+        view's tokens by holder ((result id, row id) -> tokens), each row its
+        own. releasing: holders an update lets go of first (counted as let go
+        for the cap, and let go only once the new ones are sure to be kept)"""
+        if not used:
+            for key in releasing:
+                self.unpin_key(key)
+            return
+        gone = set(releasing)
+        held = sum(1 for t in self.tokens.values() if t["results"] - gone)
+        if held + len([t for t in used if t not in self.tokens or not (self.tokens[t]["results"] - gone)]) > HARD_TOKENS:
+            raise blocks.Invalid("more pictures are in use than the guide keeps")
+        for key in releasing:
+            self.unpin_key(key)
+        for key, tok in made.items():
+            self.tokens[tok] = {"url": key, "results": set(), "used": 0}
+            self.token_of[key] = tok
+        self.use += 1
+        for holder, toks in (by_row if by_row is not None else {rid: used}).items():
+            for tok in toks:
+                self.tokens[tok]["results"].add(holder)
+                self.tokens[tok]["used"] = self.use
+            self.live[holder] = set(toks) | self.live.get(holder, set())
+        self.prune_tokens()
+
+    @staticmethod
+    def tokens_in(v):
+        """Every picture token a checked block names"""
+        out = set()
+        if isinstance(v, dict):
+            tok = v.get("token")
+            if isinstance(tok, str) and TOKEN_RE.match(tok):
+                out.add(tok)
+            for x in v.values():
+                out |= Runtime.tokens_in(x)
+        elif isinstance(v, list):
+            for x in v:
+                out |= Runtime.tokens_in(x)
+        return out
+
+    def row_tokens(self, rid, kind, value):
+        """A live view's tokens by holder: a screen's by (result id, row id),
+        a Home row's by (result id, "")"""
+        if kind == "rows":
+            return {(rid, ""): self.tokens_in(value)}
+        return {(rid, r["id"]): self.tokens_in(r) for r in value["rows"]}
+
+    def prune_tokens(self):
+        """Past MAX_TOKENS, the least recently used tokens no result holds go
+        (never one a result holds). One queued goes with its answer; one
+        being fetched finds out before it writes or answers anything."""
+        if len(self.tokens) <= MAX_TOKENS:
+            return
+        free = sorted((t["used"], tok) for tok, t in self.tokens.items() if not t["results"])
+        for _, tok in free[:len(self.tokens) - MAX_TOKENS]:
+            self.token_of.pop(self.tokens.pop(tok)["url"], None)
+            if self.queue.pop(tok, None):
+                self.image_failed(tok, "unknown", "unknown picture")
+
+    def unpin(self, rid):
+        """The guide let go of a result: its tokens are no longer held by it
+        (nor by any of its rows, for a live view, which ends with it)"""
+        for key in [k for k in self.live if k == rid or (isinstance(k, tuple) and k[0] == rid)]:
+            self.unpin_key(key)
+        v = self.views.pop(rid, None)
+        if v and v["on"]:
+            self.turn_view(rid, v, False)   # the app hears it's off, whatever order the guide said it in
+        elif v:
+            v["owner"].end()
+
+    def turn_view(self, rid, v, on):
+        """A live view on the screen, or not any more: a new owner for what
+        it fetches, or that owner ended and its stream closed; the app hears
+        it once (viewOn, viewOff)"""
+        v["on"] = on
+        if on:
+            v["owner"] = ViewOwner(rid)
+        else:
+            v["owner"].end()   # what it was fetching for the view is called off
+            self.close_stream(rid, "its view went")
+        self.to_app({"t": "viewOn" if on else "viewOff", "view": rid, "method": v["method"], "args": v["args"]})
+
+    def unpin_key(self, key):
+        for tok in self.live.pop(key, ()):
+            t = self.tokens.get(tok)
+            if t:
+                t["results"].discard(key)
+
+    def drop_unheld(self):
+        """Pictures still waiting that no result holds any more (the guide
+        let go of every result naming them) go before they spend anything,
+        each answered stale: no screen or Home row the guide keeps shows them"""
+        for tok, q in list(self.queue.items()):
+            t = self.tokens.get(tok)
+            if not t or not t["results"]:
+                del self.queue[tok]
+                self.image_failed(tok, "stale", "the guide let go of it", q["epoch"])
+
+    async def play(self, value):
+        if not self.perms["play"]:
+            raise blocks.Invalid("it didn't ask to play media")
+        url, kind = self.rules.parse(value["url"], "GET")
+        headers = net.check_headers(value["headers"], kind)
+        await self.relay.start()
+        for s in list(self.sessions):
+            self.sessions.pop(s, None)
+        handle = self.relay.open_session(value["context"])
+        self.sessions[handle] = value["context"]
+        i = self.relay.add(handle, url, headers, "play")
+        return {"url": self.relay.link(i, "play", url), "title": value["title"],
+                "subtitle": value["subtitle"], "startAt": value["startAt"], "live": value["live"], "session": handle}
+
+    # ---- fetches ----
+    def on_fetch(self, f):
+        owner, why = self.owner(f)
+        if not owner:
+            self.to_app({"t": "fetchReply", "id": f["id"], "error": {"code": why[0], "text": why[1]}})
+            return
+        if self.fetch_count >= MAX_FETCH_ACTIVE + MAX_FETCH_QUEUED + (1 if owner.reserved else 0):
+            raise blocks.Violation("it had more than 20 requests going at once")
+        self.fetch_count += 1
+        t = self.spawn(self.fetch(f, owner))
+        owner.tasks.add(t)
+
+    async def fetch(self, f, owner):
+        reply = None
+        try:
+            left = owner.deadline - self.loop.time() if not isinstance(owner, ViewOwner) else 30.0
+            reply = await asyncio.wait_for(self.fetch_now(f, owner), max(0.0, left))
+        except asyncio.TimeoutError:
+            reply = {"code": "timeout", "text": "the request ran out of time"}
+        except asyncio.CancelledError:
+            reply = {"code": "cancelled", "text": "the call it belongs to is over"}
+        except net.NetError as e:
+            reply = {"code": e.code, "text": str(e)[:200]}
+        except Exception as e:
+            reply = {"code": "failed", "text": "the request failed (" + type(e).__name__ + ")"}
+        finally:
+            self.fetch_count -= 1
+            owner.tasks.discard(asyncio.current_task())
+        if "t" not in reply:
+            reply = {"t": "fetchReply", "id": f["id"], "error": reply}
+        if self.state not in ("stopped",):
+            self.to_app(reply)
+
+    async def fetch_now(self, f, owner):
+        method = f["method"]
+        if owner.reserved:
+            sem = self.reserved_sem
+        else:
+            while not self.fetch_rate.take():
+                await asyncio.sleep(self.fetch_rate.wait())
+            sem = self.fetch_sem
+        async with sem:
+            body = base64.b64decode(f.get("body", ""), validate=True) or None
+            res = await self.open(f["url"], method, f.get("headers"), body, what="fetch")
+            try:
+                data = await res.body(MAX_FETCH_REPLY)
+            finally:
+                res.close()
+        headers, size = {}, 0
+        for k, v in res.headers:
+            k = k.lower()
+            size += len(k) + len(v)
+            if size > MAX_REPLY_HEADERS:
+                break
+            headers[k] = headers[k] + ", " + v if k in headers else v
+        return {"t": "fetchReply", "id": f["id"], "status": res.status, "headers": headers,
+                "body": base64.b64encode(data).decode()}
+
+    async def open(self, raw_url, method, headers, body, raw_headers=False, what="fetch", rules=None):
+        """A request under the app's rules: online through appnet, or (try,
+        offline) answered only by a fixture. Never reaches the network
+        offline: the gate in appnet.connect refuses before any lookup.
+        what (fetch, image, media): how its Activity counts it. Every attempt
+        is counted against the site it went to (appnet.request's observe),
+        and every refusal, its headers' too. rules: narrower ones than the
+        app's (a stream's: its net hosts only, at every redirect)."""
+        rules = rules or self.rules
+        url = None
+        try:
+            url = net.parse_url(raw_url)
+            kind = rules.check(url, method)
+            if method not in net.NET_METHODS and not self.allow_write:
+                raise net.NetError("method", "try: --allow-write lets " + method + " reach " + (url.host if kind == "net" else "the server"))
+            # the relay's headers were checked when the play result was
+            sent = headers if raw_headers else net.check_headers(headers, kind)
+        except net.NetError as e:
+            self.note_refused(e.code, url)
+            raise
+        if self.fixtures is not None and not self.gate.online:
+            return self.fixtures.answer(url, method, sent, body)
+
+        def seen(hop, hop_kind, hop_method, status, size, code):
+            if code:
+                if code in REFUSED:
+                    self.note_refused(code, hop)
+                elif hop is not None and self.activity:   # an allowed site that couldn't be reached
+                    self.activity.failed(what, hop.authority, hop_kind == "server", hop_method)
+                    self.activity_dirty = True
+            elif self.activity:
+                self.activity.contacted(what, hop.authority, hop_kind == "server", hop_method, status, size)
+                self.activity_dirty = True
+        res = await net.request(rules, str(url), method, None, body, self.gate, self.pin, self.resolver,
+                                checked=sent, observe=seen)
+        if self.activity:
+            at, server = res.url.authority, bool(self.server) and res.url.origin == self.server.origin
+
+            def received(n):
+                self.activity.received(what, at, server, res.method, n)
+                self.activity_dirty = True
+            res.on_close = received
+        return res
+
+    def note_refused(self, code, url):
+        """A request the rules refused: counted in its Activity, and the
+        guide told the first time in this run (it shows a notice)"""
+        if code not in REFUSED:
+            return
+        name = url.authority if url is not None else None
+        if self.activity:
+            self.activity.refused(code, name)
+            self.activity_dirty = True
+        if not self.told_refused and self.activity_path:
+            self.told_refused = True
+            self.say({"t": "refused", "site": name or ""})
+
+    # ---- storage and secrets ----
+    def on_store(self, t, f):
+        owner, why = self.owner(f)
+        reply = {"t": "storeReply", "id": f["id"]}
+        if not self.store:
+            reply["error"] = {"code": "storage", "text": "it didn't ask for storage"}
+        elif not owner:
+            reply["error"] = {"code": why[0], "text": why[1]}
+        elif t == "storeGet":
+            v = self.store.map.get(f["key"])
+            reply["value"] = base64.b64encode(v[0]).decode() if v else None
+        elif t == "storePut":
+            problem = self.store.put(f["key"], base64.b64decode(f["value"], validate=True), f.get("server", False))
+            if problem:
+                reply["error"] = {"code": "quota", "text": problem}
+            else:
+                reply["ok"] = True
+        elif t == "storeDel":
+            self.store.delete(f["key"])
+            reply["ok"] = True
+        else:
+            reply["value"] = sorted(self.store.map)
+        self.to_app(reply)
+
+    def on_secret_get(self, f):
+        owner, why = self.owner(f)
+        if not owner:
+            self.to_app({"t": "secretReply", "id": f["id"], "error": {"code": why[0], "text": why[1]}})
+            return
+        self.to_app({"t": "secretReply", "id": f["id"], "value": self.secrets.get(f["name"])})
+
+    def on_secret_set(self, f):
+        fl = self.flow
+        if not fl or fl.id != f["flow"] or fl.ended:
+            self.to_app({"t": "secretReply", "id": f["id"], "error": {"code": "flow", "text": "secrets are kept only while signing in"}})
+            return
+        problem = self.secrets.set_sign_in(f["name"], f["value"])
+        if problem:
+            self.to_app({"t": "secretReply", "id": f["id"], "error": {"code": "quota", "text": problem}})
+        else:
+            self.to_app({"t": "secretReply", "id": f["id"], "ok": True})
+
+    # ---- sign-in ----
+    def on_code(self, f):
+        fl = self.flow
+        if not fl or fl.id != f["flow"]:
+            return   # another flow's: ignored
+        if fl.how != "code":
+            self.log.add("its sign-in code was refused: you chose to sign in with a password", "guide")
+            return
+        try:
+            code = blocks.plain(f["code"], 16, "the code", required=True)
+            url = ""
+            if f["url"]:
+                u, _ = self.rules.parse(f["url"], "GET")
+                url = str(u)
+        except (blocks.Invalid, net.NetError) as e:
+            self.log.add("its sign-in code was refused: " + str(e), "guide")
+            return
+        expires = max(5.0, min(float(f["expires"]), FLOW_LONGEST))
+        fl.deadline = min(fl.deadline, self.loop.time() + expires)
+        self.say({"t": "signInCode", "flow": fl.id, "code": code, "url": url, "expires": expires})
+
+    def on_sign_in_done(self, f):
+        fl = self.flow
+        if not fl or fl.id != f["flow"]:
+            return
+        try:
+            message = blocks.plain(f["message"], 400, "the message")
+        except blocks.Invalid:
+            message = ""
+        ok = f["ok"] is True
+        if self.from_sign_in() and ok and not fl.server:
+            ok, message = False, "It didn't choose a server."
+        if not ok:
+            self.undo_server(fl)
+        self.end_flow(by_app=True)
+        done = {"t": "signInDone", "flow": fl.id, "ok": ok, "message": message}
+        if self.from_sign_in():
+            done["server"] = fl.server if ok else ""   # the guide keeps it with the sign-in, in one write
+        self.say(done)
+
+    # ---- choosing your server during sign-in ----
+    def from_sign_in(self):
+        return bool((self.perms["server"] or {}).get("fromSignIn"))
+
+    def on_servers(self, f):
+        """The servers the account lists: each address checked as a server's,
+        kept by handle for this flow; the guide gets their names, addresses
+        and handles, never anything else the app knows of them"""
+        fl = self.flow
+        if not fl or fl.id != f["flow"] or fl.ended or fl.server:
+            return
+        if not self.from_sign_in():
+            self.log.add("its list of servers was refused: app.json doesn't choose its server while signing in", "guide")
+            return
+        out, kept = [], {}
+        for s in f["servers"]:
+            try:
+                label = blocks.plain(s["label"], 80, "a server's name", required=True)
+            except blocks.Invalid:
+                continue
+            urls = []
+            for u in s["urls"]:
+                try:
+                    urls.append(str(net.normalize_base(u)))
+                except net.NetError:
+                    continue
+            urls = list(dict.fromkeys(urls))
+            if urls:
+                kept[s["handle"]] = urls
+                out.append({"handle": s["handle"], "label": label, "urls": urls})
+        fl.servers = kept
+        self.say({"t": "signInServers", "flow": fl.id, "servers": out})
+
+    def choose_server(self, g):
+        """Yours, from the guide: one of that server's addresses, or one you
+        typed for it. Set for this flow (its requests, and what it keeps
+        goes with that server); the app hears which"""
+        fl, h = self.flow, g.get("handle")
+        if not (fl and fl.id == g.get("flow") and not fl.ended and not fl.server and isinstance(h, str) and h in fl.servers):
+            return
+        why, chosen = "", ""
+        if "url" in g:
+            chosen = g["url"] if g["url"] in fl.servers[h] else ""
+            why = "" if chosen else "that address isn't one of that server's"
+        else:
+            try:
+                chosen = str(net.normalize_base(g.get("typedAddress")))
+            except net.NetError as e:
+                why = str(e)
+        if chosen and self.first_server is not None and chosen != str(self.first_server):
+            chosen, why = "", "it has another server: switch it first"
+        if not chosen:
+            self.say({"t": "signInServerRefused", "flow": fl.id, "why": why[:200]})
+            return
+        fl.server = chosen
+        self.server = net.normalize_base(chosen)
+        self.rules = net.Rules(self.perms["net"], self.server, self.perms.get("netWrite"))
+        self.secrets.server = chosen
+        self.to_app({"t": "serverChosen", "flow": fl.id, "handle": h, "url": chosen})
+
+    # ---- live views ----
+    def on_update(self, f):
+        """An update to a live view on the screen: rows replacing the
+        screen's rows of the same ids (never a new row), or a Home row's
+        items; checked as a result is, the merged screen within a screen's
+        caps; then the replaced rows' pictures let go and the new ones held,
+        at once. At most one a second (a Home row: every 5 s), 64 KiB."""
+        rid = f["view"]
+        v = self.views.get(rid)
+        if not v or not v["on"]:
+            return   # its view isn't on the screen: dropped
+        now = self.loop.time()
+        why = ""
+        if now < v["next"]:
+            why = "it came too soon after the last one"
+        elif ("rows" in f) != (v["kind"] == "screen"):
+            why = "a screen's update has rows, a Home row's has items"
+        else:
+            try:
+                if len(blocks.dumps(f).encode()) > UPDATE_MAX:
+                    why = "it's bigger than 64 KB"
+            except (ValueError, UnicodeEncodeError):
+                why = "it isn't valid"
+        if why:
+            self.log.add("its update was dropped: " + why, "guide")
+            return
+        made, used = {}, set()
+        img = lambda ref, where: self.image_for(ref, where, made, used)
+        try:
+            if v["kind"] == "screen":
+                rows = blocks.rows_of(f["rows"], "the update", img, blocks.Budget(), 30, self.api, self.heroes)
+                ids = [r["id"] for r in v["value"]["rows"]]
+                for r in rows:
+                    if r["id"] not in ids:
+                        raise blocks.Invalid("it names a row the screen doesn't have (" + repr(r["id"])[:40] + ")")
+                new = {r["id"]: r for r in rows}
+                merged = dict(v["value"], rows=[new.get(r["id"], r) for r in v["value"]["rows"]])
+                if sum(len(r["items"]) for r in merged["rows"]) > 200:
+                    raise blocks.Invalid("the screen would have more than 200 items")
+                if len(blocks.dumps(merged).encode()) > blocks.MAX_SCREEN:
+                    raise blocks.Invalid("the screen would be bigger than 256 KB")
+                by_row = {(rid, r["id"]): self.tokens_in(r) for r in rows}
+                self.pin_tokens(rid, made, used, by_row, releasing=list(by_row))
+                v["value"] = merged
+                out = {"t": "update", "view": rid, "rows": rows}
+            else:
+                items = blocks.items(f["items"], "the update", img, blocks.Budget(), 50, self.api)
+                self.pin_tokens(rid, made, used, {(rid, ""): self.tokens_in(items)}, releasing=[(rid, "")])
+                v["value"] = items
+                out = {"t": "update", "view": rid, "items": items}
+        except blocks.Invalid as e:
+            self.log.add("its update was refused: " + str(e), "guide")
+            return
+        except Exception as e:   # whatever else goes wrong checking it, the reader goes on
+            self.log.add("its update was refused: it isn't valid (" + type(e).__name__ + ")", "guide")
+            return
+        v["next"] = now + UPDATE_EVERY[v["kind"]]
+        self.drop_unheld()
+        self.say(out)
+
+    def on_stream(self, f):
+        """A long GET to one of its net hosts, its lines passed on as they
+        come, while its view is on the screen: one at a time, 16 KiB a line,
+        20 lines a second, 256 KiB a minute (past any: closed), an hour at
+        most; a new one waits 5 s after the last ends, then longer"""
+        v = self.views.get(f["view"])
+        why = ""
+        if not v or not v["on"]:
+            why = "its view isn't on the screen"
+        elif self.stream:
+            why = "it has a stream open already"
+        elif self.loop.time() < self.stream_wait:
+            why = "wait %d seconds before streaming again" % max(1, int(self.stream_wait - self.loop.time() + 0.99))
+        elif not self.fetch_rate.take():
+            why = "it's making requests too fast"
+        if why:
+            self.to_app({"t": "streamEnd", "id": f["id"], "error": {"code": "stream", "text": why}})
+            return
+        st = {"id": f["id"], "view": f["view"], "started": self.loop.time(), "said": False}
+        self.stream = st
+        st["task"] = self.spawn(self.run_stream(st, f["url"]))
+
+    async def run_stream(self, st, raw_url):
+        err = None
+        res = None
+        try:
+            # its net hosts only, at every hop: a redirect to the server is refused
+            rules = net.Rules(self.perms["net"], None, self.perms.get("netWrite"))
+            url = net.parse_url(raw_url)
+            if self.rules.check(url, "GET") != "net":
+                raise net.NetError("origin", "a stream goes to one of its net hosts")
+            res = await asyncio.wait_for(self.open(raw_url, "GET", None, None, what="stream", rules=rules), 30)
+            ctype = (res.header("content-type") or "").split(";")[0].strip().lower()
+            if res.status != 200:
+                raise net.NetError("status", "the stream's server answered " + str(res.status))
+            if ctype not in STREAM_TYPES:
+                raise net.NetError("stream", "that isn't a stream of lines (" + (ctype or "no type")[:40] + ")")
+            lines = Bucket(STREAM_LINES, STREAM_LINES)
+            minute, spent, buf = self.loop.time(), 0, b""
+            end = st["started"] + STREAM_LONGEST
+            while True:
+                left = end - self.loop.time()
+                if left <= 0:
+                    raise net.NetError("stream", "a stream lasts an hour at most")
+                data = await asyncio.wait_for(res.chunk(), left)
+                if not data:
+                    break
+                if self.loop.time() - minute >= 60:
+                    minute, spent = self.loop.time(), 0
+                spent += len(data)
+                if spent > STREAM_BYTES:
+                    raise net.NetError("stream", "more than 256 KB a minute")
+                buf += data
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if len(line) > STREAM_LINE:
+                        raise net.NetError("stream", "a line longer than 16 KB")
+                    if not lines.take():
+                        raise net.NetError("stream", "more than 20 lines a second")
+                    self.to_app({"t": "streamData", "id": st["id"], "line": line.rstrip(b"\r").decode("utf-8", "replace")})
+                if len(buf) > STREAM_LINE:
+                    raise net.NetError("stream", "a line longer than 16 KB")
+        except asyncio.CancelledError:
+            err = None
+        except asyncio.TimeoutError:
+            err = {"code": "timeout", "text": "the stream timed out"}
+        except net.NetError as e:
+            err = {"code": e.code, "text": str(e)[:200]}
+        except Exception as e:
+            err = {"code": "failed", "text": "the stream failed (" + type(e).__name__ + ")"}
+        finally:
+            if res is not None:
+                res.close()
+        self.end_stream(st, err)
+
+    def end_stream(self, st, err):
+        """A stream over: the app hears it once; the next waits 5 s, doubling
+        (to 5 minutes) after one that didn't last a minute"""
+        if self.stream is st:
+            self.stream = None
+            lasted = self.loop.time() - st["started"]
+            if lasted >= 60:
+                self.stream_backoff = 5.0
+            self.stream_wait = self.loop.time() + self.stream_backoff
+            if lasted < 60:
+                self.stream_backoff = min(300.0, self.stream_backoff * 2)
+        if not st["said"]:
+            st["said"] = True
+            frame = {"t": "streamEnd", "id": st["id"]}
+            if err:
+                frame["error"] = err
+            self.to_app(frame)
+
+    def close_stream(self, rid, why):
+        """The stream of view rid (or any, rid None) closed: its view went,
+        the app asked, or it stopped"""
+        st = self.stream
+        if st and (rid is None or st["view"] == rid):
+            st["task"].cancel()
+            self.end_stream(st, {"code": "closed", "text": why} if why else None)
+
+    def undo_server(self, fl):
+        """A sign-in that chose a server and didn't finish: back to the one
+        it started with, and what it kept for the chosen one forgotten"""
+        if not fl or not fl.server:
+            return
+        self.server = self.first_server
+        self.rules = net.Rules(self.perms["net"], self.server, self.perms.get("netWrite"))
+        self.secrets.server = str(self.server) if self.server else ""
+        if self.store:
+            self.store.forget_server()   # what it kept marked for that server
+        try:
+            self.secrets.forget_sign_in()
+        except OSError:
+            pass
+        fl.server = ""
+
+    def end_flow(self, by_app=False):
+        """The sign-in over; an api 4 app hears it (signInCancel) unless it
+        ended it itself, so one waiting for what you type stops waiting"""
+        if self.flow:
+            self.flow.end()
+            if not by_app:
+                self.undo_server(self.flow)
+            if not by_app and self.api >= 4:
+                self.to_app({"t": "signInCancel", "flow": self.flow.id})
+            self.flow = None
+        self.secrets.in_flow = False   # what it kept is read again once the guide says it's signed in
+
+    # ---- the guide's frames ----
+    async def from_guide(self, g):
+        t = g.get("t") if isinstance(g, dict) else None
+        if t == "call":
+            self.call(g)
+        elif t == "cancel":
+            c = self.calls.get(g.get("id"))
+            if c and not c.cancelled:
+                c.cancelled = True
+                self.gone[c.id] = self.loop.time()
+                c.end()
+                self.to_app({"t": "cancel", "id": c.id})
+        elif t == "image":
+            tok = g.get("token")
+            if isinstance(tok, str) and TOKEN_RE.match(tok):
+                epoch = g.get("epoch", 0)
+                prio = g.get("prio", "visible")
+                self.want_image(tok, epoch if blocks.is_id(epoch) else 0, prio if prio in PRIORITY else "visible",
+                                g.get("broken") is True)
+        elif t == "demand":
+            # the guide's demand moved on (another view, or away from the app's
+            # screen), with nothing to ask for: what an older one queued goes
+            epoch = g.get("epoch")
+            if blocks.is_id(epoch):
+                self.raise_epoch(epoch)
+        elif t == "drop":
+            rs = g.get("results")
+            if isinstance(rs, list):
+                for rid in rs[:4096]:
+                    if blocks.is_id(rid):
+                        self.unpin(rid)
+                self.drop_unheld()
+                self.prune_tokens()
+        elif t == "signedIn":
+            # the guide took the sign-in as done (and marked it so): its values are the app's now
+            if self.secrets.signed_in is not None:
+                self.secrets.signed_in = True
+        elif t == "signInServer":
+            self.choose_server(g)
+        elif t in ("viewOn", "viewOff"):
+            # a live view on the screen, or not any more (the app hears it);
+            # off closes its stream, and its updates are dropped from then
+            rid = g.get("view")
+            v = self.views.get(rid) if blocks.is_id(rid) else None
+            if v and v["on"] != (t == "viewOn"):
+                self.turn_view(rid, v, t == "viewOn")
+        elif t == "signInPassword":
+            # what you typed to sign in: to the app once, inside its flow, and
+            # never in its log for the rest of its run (nothing keeps it)
+            fl, user, pw = self.flow, g.get("username"), g.get("password")
+            if (fl and fl.id == g.get("flow") and fl.how == "password" and not fl.given and not fl.ended
+                    and isinstance(user, str) and isinstance(pw, str) and 0 < len(user) <= 256 and 0 < len(pw) <= 1024
+                    and not any(c in user or c in pw for c in "\0\r\n")):   # one line each: the log is read a line at a time
+                self.sensitive.update((user, pw))
+                fl.given = True
+                self.to_app({"t": "credentials", "flow": fl.id, "username": user, "password": pw})
+        elif t == "signInCancel":
+            if self.flow and self.flow.id == g.get("flow"):
+                fid = self.flow.id
+                self.end_flow()
+                self.say({"t": "signInDone", "flow": fid, "ok": False, "message": ""})
+        elif t == "relayClose":
+            s = g.get("session")
+            if isinstance(s, str):
+                self.relay.close_session(s)
+                self.sessions.pop(s, None)
+        elif t == "stop":
+            await self.stop("normal", "", str(g.get("forget") or ""))
+
+    def call(self, g):
+        cid, method, args = g.get("id"), g.get("method"), g.get("args") or {}
+        def fail(code, text):
+            self.say({"t": "result", "id": cid, "kind": "error", "value": {"code": code, "text": text}})
+        if not blocks.is_id(cid) or cid in self.calls or cid in self.gone:
+            return
+        if self.state != "ready":
+            return fail("stopped", "the app isn't running")
+        try:
+            blocks.call_args(method, args)
+        except blocks.Invalid as e:
+            return fail("invalid", str(e))
+        terminal = method == "playback" and args.get("state") == "stopped"
+        if len([c for c in self.calls.values() if not c.reserved]) >= MAX_CALLS and not terminal:
+            return fail("busy", "the app is busy")
+        if terminal and any(c.reserved for c in self.calls.values()):
+            return fail("busy", "the app is still finishing the last playback")
+        if method == "signIn":
+            how = args.get("how", "code")
+            if how not in (self.perms["signIn"] or "").split("+") or not (isinstance(args.get("flow"), str) and TOKEN_RE.match(args["flow"])):
+                return fail("invalid", "it doesn't sign in that way")
+            self.end_flow()
+            self.flow = Flow(args["flow"], self.loop.time() + FLOW_LONGEST, how)
+        if method in ("playback", "playbackFailed"):
+            session = args.get("session")
+            if session not in self.sessions:
+                return fail("closed", "that playback is over")
+            args = dict(args, context=self.sessions[session])
+        c = Call(cid, method, args, self.loop.time() + DEADLINES.get(method, DEFAULT_DEADLINE))
+        c.reserved = terminal
+        self.calls[cid] = c
+        self.to_app({"t": "call", "id": cid, "method": method, "args": args,
+                     "deadline": int(DEADLINES.get(method, DEFAULT_DEADLINE) * 1000)})
+
+    # ---- pictures ----
+    def image_path(self, url):
+        return os.path.join(self.image_dir, hashlib.sha256(url.encode()).hexdigest()[:40])
+
+    def image_failed(self, tok, code, text, epoch=None):
+        """code: unknown (no such token, or let go), refused (the rules
+        wouldn't fetch its link), failed (it couldn't be fetched, or isn't a
+        picture), stale (an older demand), busy (the queue was full)"""
+        f = {"t": "image", "token": tok, "code": code, "error": (text or "it took too long")[:200]}
+        if epoch is not None:
+            f["epoch"] = epoch
+        self.say(f)
+
+    def raise_epoch(self, epoch):
+        """The guide's demand, at epoch: a newer one drops what an older one
+        queued (each answered stale). False if epoch is older than the one now."""
+        if epoch > self.epoch:
+            self.epoch = epoch
+            for t, q in list(self.queue.items()):
+                if q["epoch"] < epoch:
+                    del self.queue[t]
+                    self.image_failed(t, "stale", "the guide wants other pictures now", q["epoch"])
+        return epoch >= self.epoch
+
+    def want_image(self, tok, epoch, prio, broken=False):
+        """A picture the guide wants now. A newer demand epoch drops what an
+        older one queued; one already kept is answered at once (no budget
+        spent); the focus picture goes first, then visible cards, then the
+        rest. broken: the guide couldn't draw the file it was given, so the
+        file goes and it's fetched again (the guide asks so once)."""
+        if not self.raise_epoch(epoch):
+            self.image_failed(tok, "stale", "the guide wants other pictures now", epoch)
+            return
+        entry = self.tokens.get(tok)
+        if not entry or not self.image_dir:
+            self.image_failed(tok, "unknown", "unknown picture")
+            return
+        self.use += 1
+        entry["used"] = self.use
+        if broken and tok not in self.fetching:
+            unlink(self.image_path(entry["url"]))
+        kept = self.kept(entry["url"])
+        if kept:
+            self.say({"t": "image", "token": tok, "path": kept[0], "w": kept[1], "h": kept[2]})
+            return
+        if tok in self.fetching:
+            # its answer is on its way, and now it's wanted under this demand
+            self.fetching[tok] = max(self.fetching[tok], epoch)
+            return
+        q = self.queue.get(tok)
+        if q:
+            q["epoch"] = max(q["epoch"], epoch)
+            if PRIORITY[prio] < PRIORITY[q["prio"]]:
+                q["prio"] = prio
+            return
+        if len(self.queue) >= IMAGE_QUEUE:
+            worst = max(self.queue, key=lambda t: (PRIORITY[self.queue[t]["prio"]], self.queue[t]["seq"]))
+            if PRIORITY[prio] >= PRIORITY[self.queue[worst]["prio"]]:
+                self.image_failed(tok, "busy", "too many pictures are waiting", epoch)
+                return
+            w = self.queue.pop(worst)
+            self.image_failed(worst, "busy", "too many pictures are waiting", w["epoch"])
+        self.seq += 1
+        self.queue[tok] = {"epoch": epoch, "prio": prio, "seq": self.seq}
+        self.pump_images()
+
+    def pump_images(self):
+        while self.queue and len(self.fetching) < IMAGE_FETCHES:
+            tok = min(self.queue, key=lambda t: (PRIORITY[self.queue[t]["prio"]], self.queue[t]["seq"]))
+            q = self.queue.pop(tok)
+            entry = self.tokens.get(tok)
+            if q["epoch"] < self.epoch:
+                self.image_failed(tok, "stale", "the guide wants other pictures now", q["epoch"])
+            elif not entry:
+                self.image_failed(tok, "unknown", "unknown picture")
+            else:
+                self.fetching[tok] = q["epoch"]
+                self.spawn(self.image(tok, entry["url"]))
+
+    def kept(self, url):
+        """A picture already fetched, read through its descriptor: never a
+        link, a regular file, bounded, its header a picture's. One that
+        fails any of that is deleted (and fetched again). (path, w, h) or None"""
+        path = self.image_path(url)
+        info = picture_at(path, MAX_IMAGE, touch=True)
+        if info:
+            return path, info[0], info[1]
+        unlink(path)
+        return None
+
+    def still_wanted(self, tok, url):
+        """Answered, if a fetch for tok isn't wanted any more: unknown if the
+        token was let go (or now names another link), stale if the guide's
+        demand moved past the newest one that wanted it. True if it is."""
+        t = self.tokens.get(tok)
+        if not t or t["url"] != url:
+            self.image_failed(tok, "unknown", "unknown picture")
+            return False
+        if self.fetching.get(tok, -1) < self.epoch:
+            self.image_failed(tok, "stale", "the guide wants other pictures now", self.fetching.get(tok, 0))
+            return False
+        return True
+
+    async def image(self, tok, url):
+        try:
+            # its budget: spent only while the guide still wants it
+            while not self.image_rate.take():
+                if not self.still_wanted(tok, url):
+                    return
+                await asyncio.sleep(self.image_rate.wait())
+            if not self.still_wanted(tok, url):
+                return
+            async def get():
+                res = await self.open(url, "GET", None, None, what="image")
+                try:
+                    if res.status != 200:
+                        raise net.NetError("status", "the picture's server answered " + str(res.status))
+                    return await res.body(MAX_IMAGE)
+                finally:
+                    res.close()
+            data = await asyncio.wait_for(get(), 30)
+            problem = apps.picture_problem(data)
+            if problem:
+                raise net.NetError("picture", "the picture " + problem)
+            _, w, h = apps.image_info(data)
+            t = self.tokens.get(tok)
+            if not t or t["url"] != url:
+                # let go while it came: nothing is kept, and no answer names it
+                self.image_failed(tok, "unknown", "unknown picture")
+                return
+            # checked, and its budget spent: kept, so the next time it's
+            # wanted it's there; answered only if the guide's demand still
+            # wants it (else stale, like work dropped from the queue)
+            path = self.image_path(url)
+            write_private(path, data)
+            self.prune_images()
+            if self.still_wanted(tok, url):
+                self.say({"t": "image", "token": tok, "path": path, "w": w, "h": h})
+        except net.NetError as e:
+            # a token let go, or a demand moved on, while it came answers as
+            # every other path does: unknown, or stale
+            if self.still_wanted(tok, url):
+                self.image_failed(tok, "refused" if e.code in REFUSED else "failed", str(e))
+        except (asyncio.TimeoutError, OSError) as e:
+            if self.still_wanted(tok, url):
+                self.image_failed(tok, "failed", str(e))
+        finally:
+            self.fetching.pop(tok, None)
+            self.pump_images()
+
+    def prune_images(self):
+        try:
+            found = []
+            for n in os.listdir(self.image_dir):
+                p = os.path.join(self.image_dir, n)
+                st = os.lstat(p)
+                if stat.S_ISREG(st.st_mode):
+                    found.append((st.st_mtime, st.st_size, p))
+            total = sum(s for _, s, _ in found)
+            for _, size, p in sorted(found):
+                if total <= IMAGES_PER_APP * 3 // 4:
+                    break
+                unlink(p)
+                total -= size
+        except OSError:
+            pass
+
+    # ---- time ----
+    async def tick(self):
+        last_commit = 0.0
+        while self.state not in ("stopping", "stopped"):
+            await asyncio.sleep(0.25)
+            now = self.loop.time()
+            for c in list(self.calls.values()):
+                if not c.timed_out and not c.cancelled and now > c.deadline:
+                    c.timed_out = True
+                    self.gone[c.id] = now
+                    c.end()
+                    self.to_app({"t": "cancel", "id": c.id})
+                    self.say({"t": "result", "id": c.id, "kind": "error", "value": {"code": "timeout", "text": "the app took too long"}})
+                if now > c.deadline + GRACE:   # still no answer, cancelled or not
+                    await self.stop("timeout", "it didn't answer " + c.method + " within " + str(int(GRACE)) + " seconds of its deadline")
+                    return
+            for cid, at in list(self.gone.items()):
+                if now - at > 120 and cid not in self.calls:
+                    del self.gone[cid]
+            if self.flow and now > self.flow.deadline:
+                fid = self.flow.id
+                self.end_flow()
+                self.say({"t": "signInDone", "flow": fid, "ok": False, "message": "The code expired."})
+            if now - last_commit >= 1.0:
+                last_commit = now
+                self.commit()
+
+    def commit(self, final=False):
+        try:
+            if self.store:
+                self.store.commit()
+        except OSError as e:
+            self.log.add("its storage couldn't be written (" + (e.strerror or str(e)) + ")", "guide")
+        # its Activity: at most once a minute, and when it stops
+        if self.activity and self.activity_dirty and (final or self.loop.time() - self.activity_at >= 60):
+            self.activity_dirty = False
+            self.activity_at = self.loop.time()
+            try:
+                write_private(self.activity_path, self.activity.dumps())
+            except OSError as e:
+                self.log.add("its activity couldn't be written (" + (e.strerror or str(e)) + ")", "guide")
+        self.log.flush()
+
+    # ---- stopping ----
+    async def stop(self, why, text="", forget=""):
+        """Ordered: no new calls; every pending call and request fails once;
+        the relay closes; the app's stdin closes; 2 s; then it's killed"""
+        if self.state in ("stopping", "stopped"):
+            return
+        self.state = "stopping"
+        self.stop_why = (why, text)
+        if text:
+            self.log.add("stopped: " + text, "guide")
+        for c in list(self.calls.values()):
+            c.end()
+            if not c.timed_out and not c.cancelled:
+                self.say({"t": "result", "id": c.id, "kind": "error", "value": {"code": "stopped", "text": "the app stopped"}})
+        self.calls = {}
+        if self.flow:
+            fid = self.flow.id
+            self.end_flow()
+            self.say({"t": "signInDone", "flow": fid, "ok": False, "message": ""})
+        await self.relay.close()
+        p = self.proc
+        if p and p.returncode is None:
+            try:
+                p.stdin.close()
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(p.wait(), 2)
+            except asyncio.TimeoutError:
+                try:
+                    p.kill()
+                except ProcessLookupError:
+                    pass
+                await p.wait()
+        if forget in ("signIn", "server"):
+            if self.store:
+                self.store.forget_server()
+            try:
+                self.secrets.forget_sign_in()
+            except OSError:
+                pass
+        if forget == "server" and self.image_dir:
+            shutil.rmtree(self.image_dir, ignore_errors=True)
+        if forget == "data" and self.store:
+            self.store.clear()
+        if forget == "data" and self.activity:
+            self.activity = None
+            unlink(self.activity_path)
+        self.commit(final=True)
+        for t in list(self.tasks):
+            if t is not asyncio.current_task():
+                t.cancel()
+        self.state = "stopped"
+        self.say({"t": "state", "state": "stopped", "why": why, "text": text})
+        self.done.set()
+
+
+# ---- run (the guide) -------------------------------------------------------
+
+def harden():
+    """Before any secret is read: no core dumps, nothing can attach"""
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    try:
+        ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)   # PR_SET_DUMPABLE
+    except (OSError, AttributeError):
+        pass
+
+
+def clean_env():
+    keep = ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR")
+    env = {k: os.environ[k] for k in keep if os.environ.get(k, "").startswith("/")}
+    os.environ.clear()
+    os.environ.update(env)
+    os.environ["LANG"] = "C.UTF-8"
+    return env
+
+
+async def run_main():
+    os.umask(0o077)
+    env = clean_env()
+    harden()
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader(limit=4 * 1024 * 1024)
+    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+    out = sys.stdout.buffer
+
+    def say(frame):
+        try:
+            out.write(json.dumps(frame, separators=(",", ":")).encode() + b"\n")
+            out.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    try:
+        first = await asyncio.wait_for(reader.readline(), 10)
+        init = json.loads(first)
+        app_id, source, version = init["id"], init["source"], init["version"]
+        if not apps.ID_RE.match(app_id) or not apps.VERSION_RE.match(version):
+            raise ValueError("not an app")
+        sd = apps.source_dir(source)
+        r = roots(env)
+        app_dir = os.path.join(r["apps"], sd, app_id, version)
+        if os.path.islink(app_dir) or not os.path.isdir(app_dir):
+            raise ValueError("it isn't installed")
+        cfg = {"appDir": app_dir, "gen": int(init.get("gen") or 1), "locale": str(init.get("locale") or "en-US")[:20],
+               "settings": init.get("settings") if isinstance(init.get("settings"), dict) else {},
+               "server": init.get("server") or None, "pin": init.get("pin") if re.match(r"^[0-9a-f]{64}\Z", str(init.get("pin") or "")) else "",
+               "storePath": os.path.join(r["store"], sd, app_id + ".json"),
+               "secretsPath": os.path.join(r["secrets"], sd, app_id + ".json"),
+               "logPath": os.path.join(r["logs"], sd, app_id + ".log"),
+               "imageDir": os.path.join(r["images"], sd, app_id),
+               "activityPath": os.path.join(r["activity"], sd, app_id + ".json"), "online": True}
+        for k in ("storePath", "secretsPath", "logPath", "activityPath"):
+            private_dir(os.path.dirname(cfg[k]))
+        private_dir(cfg["imageDir"])
+        # what the guide's record says is set (see Secrets); nothing said: nothing
+        names = init.get("secretsSet") if isinstance(init.get("secretsSet"), list) else []
+        cfg["secretsSet"] = [n for n in names if isinstance(n, str) and SECRET_NAME_RE.match(n)]
+        cfg["signedIn"] = init.get("signedIn") is True
+        # clean-ups the guide couldn't finish (a sign-out's, a new server's,
+        # Clear its data's, an update's dropped secrets): done now, before the
+        # app runs, or it doesn't run
+        forget = init.get("forget") if isinstance(init.get("forget"), list) else []
+        clear = init.get("clear") if isinstance(init.get("clear"), list) else []
+        if any(w not in ("signIn", "server", "data") for w in forget) or \
+                any(not isinstance(n, str) or not (n == "signIn" or SECRET_NAME_RE.match(n)) for n in clear):
+            raise ValueError("its clean-up list isn't one")
+        try:
+            for what in dict.fromkeys(forget):
+                apps.do_forget(what, app_id, source, r)
+            if clear:
+                apps.do_secret_clear(cfg["secretsPath"], *dict.fromkeys(clear))
+        except (apps.Bad, OSError) as e:
+            raise ValueError("what it had couldn't be cleared first (" + str(e)[:120] + ")")
+        rt = Runtime(cfg, say)
+    except (ValueError, KeyError, TypeError, OSError, apps.Bad, net.NetError, asyncio.TimeoutError) as e:
+        say({"t": "state", "state": "stopped", "why": "start", "text": "it couldn't start: " + str(e)[:200]})
+        return 1
+    prune_all(r["images"])
+    started = asyncio.ensure_future(rt.start())
+
+    async def guide():
+        while not rt.done.is_set():
+            try:
+                line = await reader.readline()
+            except (ValueError, asyncio.LimitOverrunError):
+                continue
+            if not line:
+                await rt.stop("guide", "")
+                return
+            try:
+                g = json.loads(line)
+            except ValueError:
+                continue
+            if rt.state == "starting" and isinstance(g, dict) and g.get("t") != "stop":
+                await asyncio.wait([started], timeout=READY_WAIT + 1)
+            await rt.from_guide(g)
+
+    gt = asyncio.ensure_future(guide())
+    await rt.done.wait()
+    gt.cancel()
+    started.cancel()
+    return 0
+
+
+def prune_all(root):
+    """Every app's pictures together: 256 MB at most, oldest first"""
+    try:
+        found = []
+        for dirpath, dirs, names in os.walk(root, followlinks=False):
+            for n in names:
+                p = os.path.join(dirpath, n)
+                st = os.lstat(p)
+                if stat.S_ISREG(st.st_mode):
+                    found.append((st.st_mtime, st.st_size, p))
+        total = sum(s for _, s, _ in found)
+        for _, size, p in sorted(found):
+            if total <= IMAGES_TOTAL:
+                break
+            unlink(p)
+            total -= size
+    except OSError:
+        pass
+
+
+# ---- try (for whoever writes an app) ---------------------------------------
+
+# What the guide draws, worked out as its AppLooks.js does for someone who
+# hasn't chosen anything (no choices of their own, and a theme that sets no
+# app looks): the look is the one the app suggests in app.json, else
+# Classic. Each look's picture rule (that shape wherever a row's items have
+# that picture; "app": as the app says), its card size and its details page
+# ("app": as the app says). tests/apprun.test.py holds all of this to
+# AppLooks.js's own answers, look by look.
+LOOKS = {"classic": ("app", "app", "app"), "posters": ("poster", "app", "app"), "cinematic": ("wide", "large", "cinematic"),
+         "wall": ("poster", "small", "app"), "compact": ("app", "small", "classic")}
+SHAPES = ("poster", "wide", "square", "logo", "circle")
+SIZES = ("small", "medium", "large")
+LAYOUTS = ("row", "grid", "list", "hero")
+# the picture a card takes for its row's shape (cardImage); a square the row
+# learned for itself shows the card's own image, whole
+PICTURE_OF = {"poster": "poster", "wide": "wide", "square": "square", "logo": "logo"}
+
+
+def picture_size(img):
+    """"200×300" for a picture whose size is known (packaged, or fetched), else """""
+    if isinstance(img, dict) and img.get("w") and img.get("h"):
+        return "%d×%d" % (img["w"], img["h"])
+    return ""
+
+
+def row_has(items, key):
+    """Whether a row's items have the picture for a shape (rowHas): every
+    item with any picture has that one, and at least one does"""
+    found = False
+    for it in items:
+        pics = it.get("images") or {}
+        if pics.get(key):
+            found = True
+        elif it.get("image") or any(pics.get(p) for p in pics):
+            return False
+    return found
+
+
+def learned_shape(ratios):
+    """autoShape's vote: width over height under 0.8 a poster, to 1.25 a
+    square, above that wide; the majority, else (a tie, or nothing to go on)
+    wide"""
+    votes = {"poster": 0, "square": 0, "wide": 0}
+    for r in ratios:
+        if r > 0:
+            votes["poster" if r < 0.8 else "square" if r <= 1.25 else "wide"] += 1
+    most = max(votes.values())
+    best = [k for k in ("poster", "square", "wide") if votes[k] == most]
+    return best[0] if most and len(best) == 1 else "wide"
+
+
+def auto_shape(items):
+    """The shape the guide learns for a row nothing gives one, from the
+    pictures of its first three items (one with none counts neither way),
+    or None while that depends on a picture fetched later"""
+    known, waiting = [], 0
+    for it in items[:3]:
+        img = it.get("image")
+        if isinstance(img, dict) and img.get("w") and img.get("h"):
+            known.append(img["w"] / img["h"])
+        elif img:
+            waiting += 1
+        else:
+            known.append(0)
+    answers = {learned_shape(known + list(rest)) for rest in itertools.product((0, 0.5, 1, 2), repeat=waiting)}
+    return answers.pop() if len(answers) == 1 else None
+
+
+def presented(r, defaults, look):
+    """A row as the guide draws it in that look (shapeOf, sizeOf, layoutOf
+    and cardImage): its layout, shape and size, each with where it came
+    from, and each card's picture ("images.<key>" or "image", the picture,
+    and why), or None for none"""
+    rule, look_size, _ = LOOKS.get(look) or LOOKS["classic"]
+    named = "the " + (look if look in LOOKS else "classic").title() + " look"
+    d = (defaults or {}).get(r["id"]) or {}
+
+    def app_says(k, allowed):
+        if r.get(k) in allowed:
+            return r[k], "the row says"
+        if d.get(k) in allowed:
+            return d[k], "app.json"
+        return None, ""
+    layout, layout_from = app_says("layout", LAYOUTS)
+    if rule != "app" and row_has(r["items"], rule):
+        shape, shape_from = rule, named
+    else:
+        shape, shape_from = app_says("shape", SHAPES)
+        if not shape:
+            learned = auto_shape(r["items"])
+            shape, shape_from = (learned, "learned") if learned else ("wide", "auto")
+    if look_size != "app":
+        size, size_from = look_size, named
+    else:
+        size, size_from = app_says("size", SIZES)
+        size, size_from = (size, size_from) if size else ("medium", "the default")
+    key = None if shape_from == "auto" or (shape_from == "learned" and shape == "square") else PICTURE_OF.get(shape)
+    pictures = []
+    for it in r["items"]:
+        pics = it.get("images") or {}
+        if key and pics.get(key):
+            pictures.append(("images." + key, pics[key], ""))
+        elif it.get("image"):
+            pictures.append(("image", it["image"], "no images." + key + ": its image instead" if key else ""))
+        else:
+            pictures.append(None)
+    return {"layout": layout or "row", "layout_from": layout_from or "the default", "shape": shape, "shape_from": shape_from,
+            "size": size, "size_from": size_from, "pictures": pictures}
+
+
+def detail_style(value, look):
+    """A details page's style as the guide draws it in that look
+    (detailStyleOf), and where it came from"""
+    page = (LOOKS.get(look) or LOOKS["classic"])[2]
+    if page != "app":
+        return page, "the " + (look or "classic").title() + " look"
+    style = "cinematic" if value.get("style") == "cinematic" else "classic"
+    return style, "the app says" if value.get("style") in ("cinematic", "classic") else "the default"
+
+
+def render_row(r, defaults, look, out):
+    """One row as the guide draws it, on a screen or a details page alike:
+    its layout, shape and size, each with where it came from (and what a
+    hero, a list or a row without pictures does with them), then each card
+    and the picture it shows"""
+    head = "  ROW " + r["id"] + ": " + r["title"] + " [" + str(len(r["items"])) + " items]"
+    if not r["items"]:
+        out(head + " not drawn: it has no items")
+        return
+    if r.get("layout") == "table":
+        # api 4: a table, as the guide draws it whatever the look
+        cols = r["columns"]
+        out(head + " layout table (the row says): " + str(len(cols)) + " columns, a line each item, the selected one ringed")
+        out("    | " + " | ".join(c["label"] + (" (right)" if c["align"] == "end" else "") for c in cols))
+        for it in r["items"]:
+            out("    - " + " | ".join(it["cells"]) + "  {" + it["kind"] + " " + it["id"] + "}" + chart_words(it.get("chart")))
+        return
+    if r.get("layout") == "ticker":
+        out(head + " layout ticker (the row says): its items move across slowly, and stop while it's selected (not while the screen saver or a video is on)")
+        out("    " + "  ·  ".join(it["title"] + (" [" + it["badge"] + "]" if it["badge"] else "") for it in r["items"]))
+        return
+    p = presented(r, defaults, look)
+    layout = p["layout"]
+    if p["shape_from"] in ("learned", "auto"):
+        firsts = ", ".join(picture_size(it.get("image")) or ("not fetched yet" if it.get("image") else "no picture") for it in r["items"][:3])
+        shape = ("shape auto: " + p["shape"] + " from its first pictures (" + firsts + ")") if p["shape_from"] == "learned" \
+            else "shape auto: from its first pictures, once the guide has them (" + firsts + "; wide until then)"
+    else:
+        shape = "shape " + p["shape"] + " (" + p["shape_from"] + ")"
+    bits = ["layout " + layout + " (" + p["layout_from"] + ")", shape, "size " + p["size"] + " (" + p["size_from"] + ")"]
+    notes = []
+    if layout == "hero":
+        notes.append("hero: one item at a time, its backdrop (else its wide picture) behind, its logo (else its title)")
+    elif layout == "list":
+        notes.append("list: a line each, its picture small beside it")
+    if not any(it.get("image") or it.get("images") for it in r["items"]):
+        notes.append("no pictures: cards show their titles")
+    out(head + " " + ", ".join(bits) + "".join("; " + n for n in notes))
+    for it, pic in zip(r["items"], p["pictures"]):
+        extra = [x for x in (it["subtitle"], it.get("meta"), it["badge"] and "[" + it["badge"] + "]",
+                             it["progress"] is not None and str(int(it["progress"] * 100)) + "%",
+                             it.get("watched") and "watched ✓") if x]
+        if layout == "hero":
+            pics = it.get("images") or {}
+            back = "images.backdrop" if pics.get("backdrop") else "images.wide" if pics.get("wide") else "none"
+            shown = "backdrop: " + back + ", logo: " + ("images.logo" if pics.get("logo") else "its title")
+        elif pic:
+            shown = "picture: " + pic[0] + (" " + picture_size(pic[1]) if picture_size(pic[1]) else "") + (" (" + pic[2] + ")" if pic[2] else "")
+        else:
+            shown = "no picture"
+        out("    - " + it["title"] + (" — " + " · ".join(extra) if extra else "") + "  {" + it["kind"] + " " + it["id"] + "}  " + shown + chart_words(it.get("chart"), layout))
+        if it.get("text"):
+            out("      | " + it["text"].split("\n")[0][:100])
+
+
+def chart_words(c, layout="list"):
+    """An item's or a details page's chart (api 4), in words"""
+    if not c:
+        return ""
+    pts = c["points"]
+    ends = ", ".join(x for x in (c["low"] and "low " + c["low"], c["high"] and "high " + c["high"]) if x)
+    where = "" if layout in ("list", "table", "details") else " (drawn in a list or table row; this row's cards don't show it)"
+    return "  chart: %d points, %g to %g, last %g%s%s" % (len(pts), min(pts), max(pts), pts[-1], " (" + ends + ")" if ends else "", where)
+
+
+def render(kind, value, out, defaults=None, look=""):
+    """A result as plain text, the way an agent reads it: each row's layout,
+    shape and size (and where each came from), and for each card the
+    picture it shows, as the guide draws them before anyone's choices.
+    defaults: the app's app.json row defaults (api 3), by row id; look: the
+    look its app.json suggests ("": Classic)"""
+    look = look if look in LOOKS else ""
+    named = (look or "classic").title()
+    if kind == "error":
+        out("error " + value["code"] + ": " + value["text"])
+    elif kind == "screen":
+        out("SCREEN " + (value["title"] or "(no title)") + ((" (refresh every " + str(int(value["refresh"])) + " s)") if value["refresh"] else ""))
+        out("  (as the guide draws it in the " + named + " look" + (", the one app.json suggests" if look else "") +
+            ": the user's own choices, or a theme's, can change shapes and sizes)")
+        if not value["rows"]:
+            out("  (empty) " + value["empty"])
+        for r in value["rows"]:
+            render_row(r, defaults, look, out)
+    elif kind == "detail":
+        out("DETAILS " + value["title"] + (" — " + value["subtitle"] if value["subtitle"] else ""))
+        style, style_from = detail_style(value, look)
+        bits = ["style " + style + " (" + style_from + ")"]
+        if value.get("logo"):
+            bits.append("its logo for the title")
+        if value.get("meta"):
+            bits.append(value["meta"])
+        if value.get("chips"):
+            bits.append("chips: " + ", ".join(value["chips"]))
+        out("  " + " · ".join(bits))
+        pic = picture_size(value.get("image") or {})
+        back = picture_size(value.get("backdrop") or {})
+        out("  picture: " + ("its image " + pic if value.get("image") else "none") + "; backdrop: " + ("its backdrop " + back if value.get("backdrop") else "none"))
+        for f in value["facts"]:
+            out("  " + f["label"] + ": " + f["value"])
+        if value.get("chart"):
+            out(" " + chart_words(value["chart"], "details"))
+        if value["text"]:
+            for line in value["text"].split("\n"):
+                out("  | " + line)
+        for a in value["actions"]:
+            out("  [" + a["label"] + "] {" + a["kind"] + " " + a["id"] + "}")
+        for r in value["rows"]:
+            render_row(r, defaults, look, out)
+    elif kind == "play":
+        out("PLAY " + (value["title"] or "") + " via " + value["url"].split("/")[2] + " (start at " + str(value["startAt"]) + " s" + (", live" if value["live"] else "") + ")")
+    elif kind == "message":
+        out("MESSAGE " + value["text"])
+    elif kind == "page":
+        out("PAGE " + value["title"] + " (the arrows scroll it)")
+        for sct in value["sections"]:
+            if sct["heading"]:
+                out("  ## " + sct["heading"])
+            for line in sct["text"].split("\n"):
+                out("  | " + line)
+    elif kind == "rows":
+        out("ROW ITEMS " + ", ".join(i["title"] for i in value))
+    else:
+        out("ok")
+
+
+async def try_main(argv):
+    os.umask(0o077)
+    harden()
+    opts = {"calls": [], "fixtures": "", "live": False, "write": False, "server": "", "pin": "", "secrets": "", "json": False, "play": False}
+    folder = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--call", "--fixtures", "--server", "--pin", "--secrets") and i + 1 < len(argv):
+            if a == "--call":
+                opts["calls"].append(argv[i + 1])
+            else:
+                opts[a[2:]] = argv[i + 1]
+            i += 2
+            continue
+        if a == "--live":
+            opts["live"] = True
+        elif a == "--allow-write":
+            opts["write"] = True
+        elif a == "--json":
+            opts["json"] = True
+        elif a == "--play":
+            opts["play"] = True
+        elif not a.startswith("--") and folder is None:
+            folder = a
+        else:
+            print("try: unknown option " + a, file=sys.stderr)
+            return 2
+        i += 1
+    if not folder:
+        print(__doc__, file=sys.stderr)
+        return 2
+    written = [0]
+
+    def out(line):
+        written[0] += len(line) + 1
+        if written[0] <= 1024 * 1024:
+            try:
+                print(line, flush=True)
+            except BrokenPipeError:
+                # whoever reads it stopped (| head): say nothing more
+                written[0] = 1 << 40
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+    tmp = tempfile.mkdtemp(prefix="om-pg-try-")
+    rt = None
+    code = 0
+    try:
+        app = os.path.join(tmp, "app")
+        os.mkdir(app, 0o755)
+        try:
+            files = apps.copy_folder(os.path.abspath(folder), app)
+            manifest = apps.check_files(app, files)
+        except apps.Bad as e:
+            out(json.dumps({"ok": False, "error": {"code": "invalid", "text": str(e)}}) if opts["json"] else "not valid: " + str(e))
+            return 2
+        if manifest["kind"] != "app":
+            out("not an app with code (kind " + manifest["kind"] + ")")
+            return 2
+        for root, dirs, names in os.walk(app):
+            os.chmod(root, 0o755)
+            for n in names:
+                os.chmod(os.path.join(root, n), 0o444)
+        secrets_path = ""
+        typed = {}                 # @username and @password, for a password sign-in
+        if opts["secrets"]:
+            st = os.stat(opts["secrets"])
+            if st.st_mode & 0o077:
+                out("try: the secrets file must be mode 0600 (only you can read it)")
+                return 2
+            raw = read_private(opts["secrets"], 64 * 1024)
+            d = json.loads(raw or b"{}")
+            typed = {k: d.pop(k) for k in ("@username", "@password") if isinstance(d.get(k), str)}
+            secrets_path = os.path.join(tmp, "secrets.json")
+            server = str(net.normalize_base(opts["server"])) if opts["server"] else ""
+            write_private(secrets_path, json.dumps({"user": d, "signIn": {"server": server, "values": d}}).encode())
+        try:
+            fixtures = Fixtures(opts["fixtures"]) if not opts["live"] else None
+        except (net.NetError, ValueError, KeyError) as e:
+            out("try: a fixture isn't valid: " + str(e))
+            return 2
+        if fixtures is None and not opts["live"]:
+            fixtures = Fixtures("")
+        cfg = {"appDir": app, "gen": 1, "locale": "en-US", "settings": {}, "server": opts["server"] or None,
+               "pin": opts["pin"], "storePath": os.path.join(tmp, "store.json"), "secretsPath": secrets_path,
+               "logPath": os.path.join(tmp, "log"), "imageDir": os.path.join(tmp, "img"), "online": opts["live"],
+               "fixtures": fixtures, "allowWrite": opts["write"], "scope": "om-pg-try-" + secrets.token_hex(8)}
+        results = []
+        events = []
+
+        picks = {}                 # a sign-in's flow -> the server try chooses for it ({"server": handle, "url" or "typed"})
+
+        def say(frame):
+            events.append(frame)
+            if frame.get("t") == "signInCode":
+                out("SIGN IN code " + frame["code"] + (" at " + frame["url"] if frame["url"] else "") + " (expires in " + str(int(frame["expires"])) + " s)")
+            elif frame.get("t") == "signInDone":
+                out("SIGN IN " + ("done" if frame["ok"] else "not done") + ((": " + frame["message"]) if frame["message"] else "")
+                    + (" (server " + frame["server"] + ")" if frame.get("server") else ""))
+            elif frame.get("t") == "signInServers":
+                # the account's servers, as the guide would list them; try chooses as the call said
+                # (signIn:{"server": "<handle>", "url" or "typed": "<address>"}), else the first's first address
+                for sv in frame["servers"]:
+                    out("SIGN IN server " + sv["handle"] + ": " + sv["label"] + " at " + ", ".join(sv["urls"]))
+                want = picks.get(frame["flow"]) or {}
+                sv = next((x for x in frame["servers"] if x["handle"] == want.get("server")), frame["servers"][0] if frame["servers"] else None)
+                if sv is None:
+                    out("SIGN IN no server to choose")
+                    return
+                g = {"t": "signInServer", "flow": frame["flow"], "handle": sv["handle"]}
+                if want.get("typed"):
+                    g["typedAddress"] = str(want["typed"])
+                else:
+                    g["url"] = want["url"] if want.get("url") in sv["urls"] else sv["urls"][0]
+                out("SIGN IN choosing " + sv["handle"] + " at " + (g.get("typedAddress") or g["url"]))
+                asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(rt.from_guide(g)))
+            elif frame.get("t") == "signInServerRefused":
+                out("SIGN IN server refused: " + frame["why"])
+
+        rt = Runtime(cfg, say, echo=(lambda l: out("log: " + l)) if not opts["json"] else None)
+        try:
+            async with asyncio.timeout(60):
+                if not await rt.start():
+                    why = rt.stop_why
+                    out(json.dumps({"ok": False, "error": {"code": why[0], "text": why[1]}}) if opts["json"] else "didn't start: " + why[1])
+                    return 3
+                n = 0
+                for spec in opts["calls"] or ["home"]:
+                    method, _, arg = spec.partition(":")
+                    args = json.loads(arg) if arg else {}
+                    if method == "signIn":
+                        flow_id = secrets.token_hex(16)
+                        picks[flow_id] = {k: args[k] for k in ("server", "url", "typed") if isinstance(args.get(k), str)}
+                        args = {"flow": flow_id, "how": args.get("how", "code")}
+                    n += 1
+                    before = len(events)
+                    await rt.from_guide({"t": "call", "id": n, "method": method, "args": args})
+                    while not any(e.get("t") == "result" and e.get("id") == n for e in events[before:]) and rt.state == "ready":
+                        await asyncio.sleep(0.05)
+                    res = next((e for e in events[before:] if e.get("t") == "result" and e.get("id") == n), None)
+                    if method == "signIn" and res and res["kind"] == "ok" and args["how"] == "password":
+                        if len(typed) == 2:
+                            await rt.from_guide({"t": "signInPassword", "flow": args["flow"], "username": typed["@username"], "password": typed["@password"]})
+                        else:
+                            out("try: a password sign-in takes @username and @password from the --secrets file")
+                            await rt.from_guide({"t": "signInCancel", "flow": args["flow"]})
+                    if method == "signIn" and res and res["kind"] == "ok":
+                        while rt.flow and rt.state == "ready":
+                            await asyncio.sleep(0.1)
+                    if res is None:
+                        why = rt.stop_why
+                        res = {"kind": "error", "value": {"code": why[0], "text": why[1]}}
+                    results.append({"call": method, "kind": res["kind"], "value": res["value"]})
+                    if opts["json"]:
+                        out(json.dumps({"call": method, "kind": res["kind"], "value": res["value"]}))
+                    else:
+                        out("== " + spec)
+                        lay = rt.manifest.get("layout") or {}
+                        render(res["kind"], res["value"], out, {r["id"]: r for r in lay.get("rows", [])}, lay.get("look") or "")
+                    if res["kind"] == "error":
+                        code = 3 if res["value"]["code"] in ("violation", "crash", "timeout", "start") else 1
+                    if res["kind"] == "play" and opts["play"]:
+                        n = await play_through(rt, res["value"], n, out, opts["json"])
+                await rt.stop("normal")
+        except TimeoutError:
+            out("try: 60 seconds is the most a try runs")
+            await rt.stop("timeout", "try ran out of time")
+            code = 3
+        why = rt.stop_why
+        if why[0] in ("violation", "crash", "timeout", "start"):
+            out(("stopped: " + why[0] + ": " + why[1]) if not opts["json"] else json.dumps({"stopped": why[0], "text": why[1]}))
+            code = 3
+        if rt.proc and rt.proc.returncode is None:
+            out("try: the sandbox was still running at the end")
+            code = 3
+        if not opts["live"]:
+            if rt.gate.attempts:
+                out("try: something tried to reach the network offline")
+                code = 3
+            missing = fixtures.unused() if fixtures else []
+            if missing:
+                out("try: fixtures expected but not used: " + ", ".join(f["method"] + " " + f["url"] for f in missing))
+                code = code or 4
+        if not opts["json"]:
+            out("network: " + ("live" if opts["live"] else "offline (no request left this computer)"))
+        return code
+    finally:
+        if rt:
+            rt.commit()
+        apps.remove_tree(tmp)
+
+
+async def relay_read(url, limit, rng=None):
+    """What a player gets from the relay: (status, headers, body up to limit)"""
+    hostport, path = url[len("http://"):].split("/", 1)
+    host, port = hostport.split(":")
+    r, w = await asyncio.open_connection(host, int(port))
+    extra = "Range: bytes=%d-%d\r\n" % rng if rng else ""
+    w.write(("GET /" + path + " HTTP/1.1\r\nHost: " + hostport + "\r\n" + extra + "\r\n").encode())
+    await w.drain()
+    head = await asyncio.wait_for(r.readuntil(b"\r\n\r\n"), 30)
+    body = b""
+    while len(body) < limit:
+        chunk = await asyncio.wait_for(r.read(65536), 30)
+        if not chunk:
+            break
+        body += chunk
+    w.close()
+    rows = head.decode("latin-1").split("\r\n")
+    hdrs = dict((x.split(":", 1)[0].lower(), x.split(":", 1)[1].strip()) for x in rows[1:] if ":" in x)
+    return int(rows[0].split()[1]), hdrs, body[:limit]
+
+
+async def play_through(rt, value, n, out, as_json):
+    """try --play: the player's part, scripted. The relay's address is read
+    (the format checks run as they would for the guide's player; a playlist
+    is followed to its first segment), then the app hears started, progress
+    and stopped (ended), as playback calls."""
+    url, report = value["url"], {}
+    try:
+        st, hd, body = await relay_read(url, 512 * 1024)
+        report = {"status": st, "type": hd.get("content-type", ""), "bytes": len(body)}
+        if st == 200 and hd.get("content-type") == "application/vnd.apple.mpegurl":
+            for _ in range(2):   # master -> media -> a segment
+                nxt = [l for l in body.decode("utf-8", "replace").splitlines() if l.startswith("http://127.0.0.1:")]
+                if not nxt:
+                    break
+                st, hd, body = await relay_read(nxt[0], 512 * 1024)
+                report.update(followed=report.get("followed", 0) + 1, status=st, type=hd.get("content-type", ""), bytes=len(body))
+                if hd.get("content-type") != "application/vnd.apple.mpegurl":
+                    break
+    except (OSError, asyncio.TimeoutError, ValueError) as e:
+        report = {"status": 0, "error": str(e)[:120]}
+    ok = report.get("status") in (200, 206) and report.get("bytes", 0) > 0
+    out(json.dumps({"played": report}) if as_json else
+        "PLAYED " + (("%d bytes of %s" % (report["bytes"], report["type"]) + (" (followed %d playlist)" % report["followed"] if report.get("followed") else ""))
+                     if ok else "nothing: the relay answered %s" % (report.get("status") or report.get("error"))))
+    events = [("started", 0), ("progress", 10), ("stopped", 20)] if ok else []
+    for seq, (state, pos) in enumerate(events, 1):
+        n += 1
+        args = {"session": value["session"], "seq": seq, "state": state, "position": pos, "duration": 0}
+        if state == "stopped":
+            args["reason"] = "ended"
+        await rt.from_guide({"t": "call", "id": n, "method": "playback", "args": args})
+        for _ in range(200):
+            if not any(c.id == n for c in rt.calls.values()):
+                break
+            await asyncio.sleep(0.05)
+    if not ok and value.get("session"):
+        n += 1
+        await rt.from_guide({"t": "call", "id": n, "method": "playbackFailed", "args": {"session": value["session"], "reason": "the relay refused it"}})
+        for _ in range(200):
+            if not any(c.id == n for c in rt.calls.values()):
+                break
+            await asyncio.sleep(0.05)
+    await rt.from_guide({"t": "relayClose", "session": value.get("session", "")})
+    return n
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[1] == "run":
+        return asyncio.run(run_main())
+    if len(argv) >= 3 and argv[1] == "try":
+        return asyncio.run(try_main(argv[2:]))
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    # SIGPIPE stays ignored (Python's default): a player hanging up mid-stream
+    # is a BrokenPipeError on that connection, never the end of the helper
+    sys.exit(main(sys.argv))

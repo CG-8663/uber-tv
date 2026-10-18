@@ -1,0 +1,265 @@
+#!/usr/bin/python3
+"""Fetches program listings (XMLTV) for the guide's IPTV channels.
+
+    om-pg-epg <request.json>
+
+The request: {"sources": [link or full path, ...], "channels": [{"url",
+"tvgId", "name"}, ...], "from": seconds, "to": seconds, "out": path}.
+Each source is downloaded (or read), unpacked (.gz, .xz) and read as it
+comes, so a big file never sits in memory. Its channels are matched to
+yours: by tvg-id first, then by name within the same country, preferring
+the East (not Pacific or West) feed. The shows of matched channels between
+"from" and "to" are written to "out" as JSON, readable by you alone:
+{"fetched", "from", "to", "sources": [{"url", "ok", "error", "channels",
+"matched", "shows"}], "shows": {channel url: [[start, end, title, description,
+category], ...]}}.
+
+Prints a JSON line as each source goes ({"source", "status"}), then
+{"done": true, "matched": n}.
+"""
+
+import datetime
+import gzip
+import json
+import lzma
+import os
+import re
+import sys
+import tempfile
+import time
+import urllib.request
+import xml.etree.ElementTree as ET
+
+MAX_DOWNLOAD = 400 * 1024 * 1024
+MAX_SHOWS = 400                     # per channel
+FEED_WORDS = {"pacific", "west", "mountain", "central"}
+GENERIC_FEEDS = {"", "sd", "hd", "fhd", "uhd", "4k", "east", "sd1", "hd1"}
+NOISE = {"hd", "sd", "fhd", "uhd", "4k", "hdtv", "east", "channel", "tv", "the", "and"}
+
+
+def say(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def words(text):
+    text = str(text or "").lower()
+    text = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", text)   # (720p), [Geo-blocked]
+    text = text.replace("&", " and ").replace("+", " plus ")
+    return re.findall(r"[^\W_]+", text)
+
+
+def key(text):
+    return "".join(w for w in words(text) if w not in NOISE and w not in FEED_WORDS)
+
+
+def split_id(tvg_id):
+    """"CNN.us@SD" -> ("cnn", "us"); "CNN.HD.us2" -> ("cnn", "us")"""
+    base = str(tvg_id or "").split("@")[0]
+    parts = base.split(".")
+    country = ""
+    if len(parts) > 1 and re.fullmatch(r"[a-zA-Z]{2}\d*", parts[-1]):
+        country = re.sub(r"\d", "", parts[-1]).lower()
+        parts = parts[:-1]
+    return key(" ".join(re.sub(r"([a-z])([A-Z])", r"\1 \2", p) for p in parts)), country
+
+
+def xmltv_time(text):
+    m = re.match(r"\s*(\d{4})(\d\d)(\d\d)(\d\d)?(\d\d)?(\d\d)?\s*([+-]\d{4})?", text or "")
+    if not m:
+        return None
+    y, mo, d, h, mi, s = (int(x) if x else 0 for x in m.groups()[:6])
+    t = datetime.datetime(y, mo, d, h, mi, s, tzinfo=datetime.timezone.utc).timestamp()
+    zone = m.group(7)
+    if zone:
+        sign = 1 if zone[0] == "+" else -1
+        t -= sign * (int(zone[1:3]) * 3600 + int(zone[3:5]) * 60)
+    return int(t)
+
+
+def fetch(source, folder):
+    """A local path as it is; a link downloaded to a file in folder"""
+    if not re.match(r"https?://", source):
+        path = os.path.expanduser(source)
+        if not os.path.isfile(path):
+            raise OSError("no such file")
+        return path, False
+    req = urllib.request.Request(source, headers={"User-Agent": "om-pg (Omarchy program guide)"})
+    fd, path = tempfile.mkstemp(prefix="epg-", suffix=".download", dir=folder)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp, os.fdopen(fd, "wb") as out:
+            got = 0
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                got += len(chunk)
+                if got > MAX_DOWNLOAD:
+                    raise OSError("bigger than 400 MB")
+                out.write(chunk)
+    except BaseException:
+        os.unlink(path)
+        raise
+    return path, True
+
+
+def opened(path):
+    with open(path, "rb") as f:
+        magic = f.read(6)
+    if magic[:2] == b"\x1f\x8b":
+        return gzip.open(path, "rb")
+    if magic == b"\xfd7zXZ\x00":
+        return lzma.open(path, "rb")
+    return open(path, "rb")
+
+
+def feed_words(*texts):
+    found = set()
+    for t in texts:
+        found |= set(words(re.sub(r"([a-z])([A-Z])", r"\1 \2", str(t or "")).replace(".", " "))) & FEED_WORDS
+    return found
+
+
+class Matcher:
+    """Your channels, findable by tvg-id and by name. A channel of one feed
+    (a Pacific or West one, or one station of a network, like CBS.us@KCCI)
+    only takes listings of that feed: the times of another would be wrong."""
+
+    def __init__(self, channels):
+        self.exact = {}      # "cnn.us@sd" and "cnn.us" -> [url]
+        self.keys = {}       # ("cnn", "us") -> [url]
+        self.feeds = {}      # url -> its feed words (pacific, west…)
+        for c in channels:
+            url, tvg, name = c.get("url"), str(c.get("tvgId") or ""), c.get("name")
+            if not url:
+                continue
+            feed = tvg.split("@")[1].lower() if "@" in tvg else ""
+            specific = feed not in GENERIC_FEEDS
+            self.feeds[url] = feed_words(name, tvg.split("@")[0])
+            if tvg:
+                self.exact.setdefault(tvg.lower(), []).append(url)
+                if not specific:
+                    self.exact.setdefault(tvg.split("@")[0].lower(), []).append(url)
+            base, country = split_id(tvg)
+            for k in ({key(name)} if specific else {base, key(name)}):
+                if k:
+                    self.keys.setdefault((k, country), []).append(url)
+
+    def candidates(self, xid, names):
+        """[(score, url)] for a listings channel"""
+        out = {}
+        for url in self.exact.get(xid.lower(), []) + self.exact.get(xid.split("@")[0].lower(), []):
+            out[url] = 3
+        base, country = split_id(xid)
+        for k in {base} | {key(n) for n in names}:
+            if not k:
+                continue
+            for url in self.keys.get((k, country), []) + (self.keys.get((k, ""), []) if country else []):
+                out[url] = max(out.get(url, 0), 2 if k == base else 1)
+        theirs = feed_words(xid, *names)
+        return [(s, u) for u, s in out.items() if s == 3 or self.feeds.get(u, set()) == theirs]
+
+
+def read(path, matcher, start, end, taken):
+    """The shows of your channels in one listings file: (channels, matched, {url: shows})"""
+    best = {}            # url -> (score, listings id)
+    seen = 0
+    wanted = None        # listings id -> [url], once the channels are read
+    shows = {}
+    with opened(path) as f:
+        for _, el in ET.iterparse(f, events=("end",)):
+            if el.tag == "channel":
+                seen += 1
+                xid = el.get("id") or ""
+                names = [n.text or "" for n in el.findall("display-name")]
+                for score, url in matcher.candidates(xid, names):
+                    if url not in taken and score > best.get(url, (0, ""))[0]:
+                        best[url] = (score, xid)
+                el.clear()
+            elif el.tag == "programme":
+                if wanted is None:
+                    wanted = {}
+                    for url, (_, xid) in best.items():
+                        wanted.setdefault(xid, []).append(url)
+                urls = wanted.get(el.get("channel") or "")
+                if urls:
+                    a, b = xmltv_time(el.get("start")), xmltv_time(el.get("stop"))
+                    if a and b and b > start and a < end and b > a:
+                        title = (el.findtext("title") or "").strip()[:200]
+                        desc = (el.findtext("desc") or "").strip()[:500]
+                        sub = (el.findtext("sub-title") or "").strip()[:120]
+                        cat = (el.findtext("category") or "").strip()[:40]
+                        if sub and sub.lower() not in title.lower():
+                            desc = (sub + ". " + desc).strip()[:500]
+                        for url in urls:
+                            lst = shows.setdefault(url, [])
+                            if len(lst) < MAX_SHOWS:
+                                lst.append([a, b, title or "Untitled", desc, cat])
+                el.clear()
+    return seen, len(shows), shows
+
+
+def tidy(lst):
+    """In order, none overlapping the next"""
+    lst.sort(key=lambda s: s[0])
+    out = []
+    for s in lst:
+        if out and s[0] < out[-1][1]:
+            if s[0] <= out[-1][0]:
+                continue
+            out[-1][1] = s[0]
+        out.append(s)
+    return out
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit("usage: om-pg-epg <request.json>")
+    with open(sys.argv[1]) as f:
+        req = json.load(f)
+    try:
+        os.unlink(sys.argv[1])   # it lists your channels: read, it goes
+    except OSError:
+        pass
+    out_path = req["out"]
+    folder = os.path.dirname(out_path)
+    os.makedirs(folder, exist_ok=True)
+    start, end = int(req.get("from") or time.time() - 3 * 3600), int(req.get("to") or time.time() + 30 * 3600)
+    matcher = Matcher(req.get("channels") or [])
+    report, shows = [], {}
+    for source in (req.get("sources") or [])[:20]:
+        entry = {"url": source, "ok": False, "error": "", "channels": 0, "matched": 0, "shows": 0}
+        try:
+            say({"source": source, "status": "fetching"})
+            path, temporary = fetch(source, folder)
+            try:
+                say({"source": source, "status": "reading"})
+                seen, matched, got = read(path, matcher, start, end, set(shows))
+            finally:
+                if temporary:
+                    os.unlink(path)
+            for url, lst in got.items():
+                shows[url] = tidy(lst)
+            entry.update(ok=True, channels=seen, matched=matched, shows=sum(len(v) for v in got.values()))
+            if not seen:
+                entry.update(ok=False, error="not program listings (XMLTV)")
+        except ET.ParseError:
+            entry["error"] = "not program listings (XMLTV)"
+        except (OSError, ValueError, EOFError, lzma.LZMAError) as e:
+            entry["error"] = str(getattr(e, "reason", None) or e)[:160]
+        report.append(entry)
+        say({"source": source, "status": "done" if entry["ok"] else "failed", "matched": entry["matched"], "error": entry["error"]})
+
+    data = {"version": 1, "fetched": int(time.time()), "from": start, "to": end, "sources": report, "shows": shows}
+    fd, tmp = tempfile.mkstemp(prefix="epg-", suffix=".json", dir=folder)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, separators=(",", ":"))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, out_path)
+    say({"done": True, "matched": len(shows)})
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        pass

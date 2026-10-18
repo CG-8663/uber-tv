@@ -1,0 +1,124 @@
+#!/bin/bash
+# Links the guide's AI agent skill into the folders agents read skills from,
+# or takes those links out again. Run by the guide when you turn the skill on
+# or off in Settings, and when it starts (to put back a missing link, or take
+# out one left from before). Also saves a copy of it to give to an AI assistant
+# of your choosing (Settings → Save the agent skill).
+#
+#   om-pg-skill link <skill folder>     a link named program-guide in each agent
+#                                       skill folder that exists, where nothing
+#                                       has that name yet
+#   om-pg-skill unlink <skill folder>   takes out the links it made (a link named
+#                                       program-guide to this skill), nothing else
+#   om-pg-skill save <skill folder>     a copy of its SKILL.md in your Downloads
+#                                       folder, as "Uber TV agent skill.md" (an
+#                                       older copy of that name is replaced)
+#
+# Prints {"linked": [...], "skipped": [...], "removed": [...]}, or for save
+# {"saved": "<the copy's path>"}.
+
+set -u
+# only the system's own programs, whatever PATH the guide was started with
+PATH=/usr/bin
+export PATH
+
+action=${1:-}
+skill=${2:-}
+name=program-guide
+
+if [[ ($action != link && $action != unlink && $action != save) || -z $skill ]]; then
+  echo "usage: om-pg-skill link|unlink|save <skill folder>" >&2
+  exit 2
+fi
+if [[ $action != unlink && ! -f $skill/SKILL.md ]]; then
+  echo "no SKILL.md in $skill" >&2
+  exit 1
+fi
+
+real_skill=$(readlink -f -- "$skill" 2>/dev/null || echo "$skill")
+folders=(
+  "$HOME/.claude/skills"
+  "${CODEX_HOME:-$HOME/.codex}/skills"
+  "$HOME/.agents/skills"
+  "$HOME/.hermes/skills"
+  "$HOME/.pi/agent/skills"
+)
+
+# One of ours: a link to this skill, or to where the plugin keeps it (a
+# link left after the plugin moved or was removed).
+ours() {
+  [[ -L $1 ]] || return 1
+  local to
+  to=$(readlink -- "$1")
+  [[ $to == "$skill" || $(readlink -f -- "$1" 2>/dev/null) == "$real_skill" || $to == */marcho78.om-pg/skills/$name ]]
+}
+
+json_list() {
+  local out="" item
+  for item in "$@"; do
+    item=${item//\\/\\\\}
+    out+="${out:+,}\"${item//\"/\\\"}\""
+  done
+  printf '[%s]' "$out"
+}
+
+# Your Downloads folder: XDG_DOWNLOAD_DIR in user-dirs.dirs ($HOME expanded,
+# nothing else), or ~/Downloads (also when it names your home folder itself)
+downloads() {
+  local config=${XDG_CONFIG_HOME:-} dir=""
+  [[ $config == /* ]] || config=$HOME/.config
+  if [[ -f $config/user-dirs.dirs ]]; then
+    dir=$(head -c 65536 -- "$config/user-dirs.dirs" | sed -n 's/^XDG_DOWNLOAD_DIR="\([^"]*\)".*/\1/p' | head -n 1)
+    dir=${dir//\$HOME/$HOME}
+  fi
+  if [[ $dir != /* || $(readlink -f -- "$dir" 2>/dev/null) == $(readlink -f -- "$HOME") ]]; then
+    dir=$HOME/Downloads
+  fi
+  printf '%s' "$dir"
+}
+
+# A copy written beside it under a name of its own, then put in place in one
+# rename (over the old copy, or over a link of that name, never through it)
+if [[ $action == save ]]; then
+  size=$(stat -L -c %s -- "$skill/SKILL.md" 2>/dev/null || echo -1)
+  if (( size < 0 || size > 1048576 )); then
+    echo "SKILL.md can't be read, or is too big" >&2
+    exit 1
+  fi
+  dir=$(downloads)
+  mkdir -p -- "$dir" 2>/dev/null
+  copy=$dir/"Uber TV agent skill.md"
+  tmp=$(mktemp -- "$dir/.uber-tv-agent-skill.XXXXXX" 2>/dev/null) || { echo "can't write in $dir" >&2; exit 1; }
+  if cat -- "$skill/SKILL.md" > "$tmp" && chmod 0644 -- "$tmp" && mv -fT -- "$tmp" "$copy"; then
+    copy=${copy//\\/\\\\}
+    printf '{"saved":"%s"}\n' "${copy//\"/\\\"}"
+    exit 0
+  fi
+  rm -f -- "$tmp"
+  echo "couldn't save the copy in $dir" >&2
+  exit 1
+fi
+
+linked=()
+skipped=()
+removed=()
+for folder in "${folders[@]}"; do
+  [[ -d $folder ]] || continue
+  link=$folder/$name
+  if [[ $action == link ]]; then
+    if ours "$link" && [[ -e $link ]]; then
+      [[ $(readlink -- "$link") == "$skill" ]] || ln -sfnT -- "$skill" "$link"
+      linked+=("$link")
+    elif ours "$link"; then                     # left pointing at nothing
+      ln -sfnT -- "$skill" "$link" && linked+=("$link")
+    elif [[ -e $link || -L $link ]]; then
+      skipped+=("$link")                        # something else has the name
+    else
+      ln -sT -- "$skill" "$link" && linked+=("$link")
+    fi
+  elif ours "$link"; then
+    rm -f -- "$link" && removed+=("$link")
+  fi
+done
+
+printf '{"linked":%s,"skipped":%s,"removed":%s}\n' "$(json_list "${linked[@]}")" "$(json_list "${skipped[@]}")" "$(json_list "${removed[@]}")"

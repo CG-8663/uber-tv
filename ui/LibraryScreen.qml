@@ -1,0 +1,139 @@
+import QtQuick
+import "../Look.js" as Look
+
+// The library (V): movies and series from your playlists, your YouTube
+// channels' videos, your own (My Videos, while it's on), and My List, as
+// rows of posters you move through with
+// the arrows (ui/CardRows.qml). Enter opens an item's details (for a series,
+// its episodes, in ui/DetailBox.qml); Space plays it, from where you stopped.
+// Everything here is styled by the library elements (Look.js) and the theme.
+Item {
+  id: lib
+
+  required property var guide
+
+  readonly property real u: guide.u
+  readonly property var tabs: guide.libraryTabs
+
+  // Tabs, and the time
+  Row {
+    id: tabRow
+    x: lib.u * 2
+    y: lib.u * 1.6
+    spacing: lib.u * 2.6
+    Repeater {
+      model: lib.tabs
+      delegate: Item {
+        required property var modelData
+        readonly property bool on: guide.libraryTab === modelData.key
+        width: tabLabel.implicitWidth
+        height: tabLabel.implicitHeight + lib.u * 0.7
+        Label {
+          id: tabLabel
+          text: parent.modelData.label
+          s: parent.on ? guide.look["libraryTab:current"] : guide.look.libraryTab
+          unit: lib.u
+        }
+        Rectangle {
+          anchors.bottom: parent.bottom
+          width: parent.width
+          height: Math.max(2, Math.round(lib.u * 0.16))
+          visible: parent.on
+          color: guide.look["libraryTab:current"].text.color
+        }
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: guide.openLibrary(parent.modelData.key)
+        }
+      }
+    }
+  }
+
+  Label {
+    anchors.right: parent.right
+    anchors.rightMargin: lib.u * 2
+    y: tabRow.y
+    text: guide.clock(guide.now)
+    s: guide.look.clock
+    unit: lib.u
+    sizeFactor: 1.5 / Math.max(0.2, guide.look.clock.text.size)
+  }
+
+  // The rows
+  CardRows {
+    id: rows
+    guide: lib.guide
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: tabRow.bottom
+    anchors.topMargin: lib.u * 1.4
+    anchors.bottom: footer.top
+    rows: guide.libraryRows
+    rowIndex: guide.libRow
+    cols: guide.libCols
+    onSelect: function(row, col) {
+      guide.libRow = row
+      var all = {}
+      for (var k in guide.libCols) all[k] = guide.libCols[k]
+      all[guide.libraryRows[row].key] = col
+      guide.libCols = all
+    }
+    onOpen: function(row, col) { select(row, col); guide.libEnter() }
+  }
+
+  // Nothing here yet
+  Column {
+    anchors.centerIn: rows
+    visible: guide.libraryRows.length === 0
+    spacing: lib.u * 0.6
+    width: Math.min(parent.width - lib.u * 8, lib.u * 50)
+    Label {
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      text: guide.libraryTab === "movies" ? "No movies or series yet" : guide.libraryTab === "ondemand" ? "No YouTube channels yet"
+          : guide.libraryTab === "videos" ? (guide.videosScanning ? "Looking for your videos…" : guide.videosMissing ? "That folder isn't there" : "No videos in " + guide.shownPath(guide.videosFolder))
+          : "Nothing in My List yet"
+      s: guide.look.boxTitle
+      unit: lib.u
+    }
+    Label {
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      wrapMode: Text.Wrap
+      text: guide.libraryTab === "movies" ? "Add an M3U playlist with movies or series in it (A in the guide): its video files come here, its live channels go in the guide. Or ask an AI agent to."
+          : guide.libraryTab === "ondemand" ? "Every video of your YouTube channels shows here, to watch from the start. Add channels with A in the guide."
+          : guide.libraryTab === "videos" ? "Video files you put there (and in the folders inside it) show here: screen recordings, downloads, your own. Settings (,) picks another folder."
+          : "L on a movie or a video adds it here."
+      s: guide.look.boxText
+      unit: lib.u
+    }
+  }
+
+  // The keys
+  Box {
+    id: footer
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    anchors.margins: lib.u * 2
+    height: guide.showKeyHints ? lib.u * 1.9 : 0
+    visible: guide.showKeyHints
+    s: guide.look.footer
+    unit: lib.u
+    KeyHints {
+      anchors.left: parent.left
+      anchors.leftMargin: footer.padding
+      anchors.verticalCenter: parent.verticalCenter
+      transformOrigin: Item.Left
+      scale: Math.min(1, (footer.width - footer.padding * 2) / Math.max(1, implicitWidth))
+      model: [{ keys: ["↑", "↓", "←", "→"], label: "Move" }, { keys: ["ENTER"], label: "Details" }, { keys: ["SPACE"], label: "Play" },
+              { keys: ["L"], label: "My List" }].concat((guide.libraryRows[guide.libRow] || { key: "" }).key.indexOf("continue") === 0 ? [{ keys: ["X"], label: "Off this row" }] : [])
+              .concat([{ keys: ["TAB"], label: lib.tabs.map(function(t) { return t.key === "movies" ? "Movies" : t.label }).join(" · ") }, { keys: ["/"], label: "Search" }, { keys: ["S"], label: "Style" },
+              { keys: ["?"], label: "All keys" }, { keys: ["ESC"], label: "Guide" }])
+      size: lib.u * 1.55
+      capStyle: guide.look.keycap
+      labelStyle: guide.look.keyLabel
+    }
+  }
+}

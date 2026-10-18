@@ -1,0 +1,30 @@
+{
+  "id": "tv.example.showcase",
+  "name": "Showcase",
+  "version": "1.0.0",
+  "api": 4,
+  "kind": "app",
+  "author": "Uber TV",
+  "description": "Every block the guide draws, offline: a featured row, rows of every picture shape, a grid, a list, both details pages, search and a Home row.",
+  "color": "#2b4c8c",
+  "icon": "icon.png",
+  "main": "main.py",
+  "permissions": {},
+  "layout": {
+    "look": "classic",
+    "rows": [
+      { "id": "featured", "label": "Featured", "layout": "hero" },
+      { "id": "movies", "label": "Movies", "shape": "poster" },
+      { "id": "continue", "label": "Continue watching", "shape": "wide" },
+      { "id": "albums", "label": "Albums", "shape": "square", "size": "small" },
+      { "id": "channels", "label": "Channels", "shape": "logo" },
+      { "id": "people", "label": "People", "shape": "circle" },
+      { "id": "library", "label": "Library", "layout": "grid", "shape": "poster", "size": "small" },
+      { "id": "episodes", "label": "Episodes", "layout": "list" },
+      { "id": "news", "label": "News" },
+      { "id": "standings", "label": "Standings" },
+      { "id": "reading", "label": "Reading", "layout": "list" }
+    ]
+  },
+  "home": [ { "key": "picks", "label": "Showcase picks", "shape": "poster" } ]
+}

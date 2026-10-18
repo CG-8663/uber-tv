@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#071447">
+<title>Uber TV Remote</title>
+<style>
+  :root {
+    --navy: #071447; --deep: #030a2b; --cell: #1b3591; --edge: #3b5bd1;
+    --ink: #f2f4ff; --dim: #9fb0f0; --yellow: #ffd23f; --red: #ff4d4d;
+    --key: #e4e9ff; --key-ink: #0b1550; --key-edge: #46559a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--deep); color: var(--ink); overscroll-behavior: none; }
+  body {
+    font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+    display: flex; justify-content: center; padding: 0 12px;
+    background: linear-gradient(var(--navy), var(--deep)) fixed;
+  }
+  /* The whole remote fits the screen: everything sizes from the visible height. */
+  main {
+    width: 100%; max-width: 440px; min-height: 100vh; min-height: 100dvh;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: max(8px, env(safe-area-inset-top)) 0 max(10px, env(safe-area-inset-bottom));
+  }
+  header { display: flex; align-items: center; justify-content: space-between; min-height: 28px; }
+  h1 { color: var(--yellow); font-size: 14px; letter-spacing: .12em; margin: 0; }
+  header a { color: var(--dim); font-size: 11px; }
+  .hidden { display: none !important; }
+
+  /* Pairing */
+  .pair p { color: var(--dim); line-height: 1.5; }
+  .pair input {
+    width: 100%; font: inherit; font-size: 32px; letter-spacing: .4em; text-align: center;
+    padding: 14px; margin: 10px 0; background: var(--deep); color: var(--ink);
+    border: 2px solid var(--edge); border-radius: 6px;
+  }
+  .pair input:focus { outline: none; border-color: var(--yellow); }
+  .error { color: var(--red); min-height: 1.4em; }
+  .pair button { min-height: 56px; }
+
+  #remote { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+
+  /* What's on, with the number being typed over it */
+  .now {
+    position: relative; display: flex; gap: 10px; align-items: center; padding: 8px 10px;
+    background: rgba(0,0,0,.25); border: 1px solid var(--edge); border-radius: 6px;
+  }
+  .now img { width: 40px; height: 40px; flex: none; object-fit: cover; border: 1px solid var(--edge); background: var(--deep); }
+  .now .lines { min-width: 0; flex: 1; }
+  .now .ch { color: var(--yellow); font-weight: bold; font-size: 13px; }
+  .now .title { font-weight: bold; font-size: 14px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .now .when { color: var(--dim); font-size: 11px; }
+  .badge { color: var(--yellow); font-size: 11px; margin-left: 6px; }
+  .typed {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center; gap: 12px;
+    background: rgba(3,10,43,.94); border-radius: 6px; color: var(--yellow); font-weight: bold; font-size: 26px; letter-spacing: .3em;
+  }
+  .typed small { font-size: 11px; letter-spacing: .1em; color: var(--dim); }
+  .typed.on { display: flex; }
+
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; flex: none; }
+  .tabs a { padding: 7px; text-align: center; color: var(--dim); text-decoration: none; font-weight: bold; font-size: 12px; letter-spacing: .1em; }
+  .tabs a.on { background: var(--yellow); color: var(--key-ink); }
+
+  /* Buttons as keycaps; they fill their grid cells */
+  button {
+    font: inherit; font-weight: bold; color: var(--key-ink); background: var(--key);
+    border: 1px solid #fff; border-radius: 8px; box-shadow: 0 3px 0 var(--key-edge);
+    width: 100%; height: 100%; min-height: 0; padding: 0; cursor: pointer;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--key-edge); }
+  button.red { background: var(--red); color: #fff; border-color: #ff9a9a; box-shadow: 0 3px 0 #8a1f1f; }
+  button.yellow { background: var(--yellow); border-color: #fff3b8; box-shadow: 0 3px 0 #8a6d10; }
+  button.wide { font-size: 18px; }
+
+  #keys {
+    --u: clamp(36px, 6.4dvh, 60px);   /* one button row */
+    flex: 1; min-height: 0; display: grid; gap: 8px;
+    grid-template-rows: var(--u) calc(var(--u) * 3 + 16px) calc(var(--u) * .85) minmax(calc(var(--u) * 3.4), 1fr);
+    grid-template-areas: "power" "dpad" "row4" "split";
+  }
+  .power { grid-area: power; display: grid; grid-template-columns: 1fr 1fr 0.7fr; gap: 8px; font-size: 15px; }
+  .dpad { grid-area: dpad; display: grid; grid-template-columns: 1fr 1.2fr 1fr; grid-template-rows: repeat(3, 1fr); gap: 8px; }
+  .dpad button { font-size: 20px; }
+  .dpad .ok { border-radius: 999px; font-size: 17px; }
+  .row4 { grid-area: row4; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .row4 button { font-size: 12px; }
+  .split { grid-area: split; display: grid; grid-template-columns: 1fr 26%; gap: 10px; min-height: 0; }
+  .numbers { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(4, 1fr); gap: 6px; }
+  .numbers button { font-size: 18px; }
+  .rocker { display: grid; grid-template-rows: 1fr auto 1fr; gap: 4px; text-align: center; }
+  .rocker span { color: var(--dim); font-size: 10px; }
+  .rocker button { font-size: 16px; }
+
+  /* Sideways: d-pad on the left, number pad on the right */
+  @media (orientation: landscape) and (max-height: 560px) {
+    main { max-width: 920px; }
+    #keys {
+      --u: clamp(30px, 10dvh, 52px);
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: var(--u) 1fr;
+      grid-template-areas: "power row4" "dpad split";
+    }
+  }
+
+  /* The guide tab scrolls inside the page */
+  #guide { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .band { color: var(--yellow); font-weight: bold; font-size: 12px; letter-spacing: .1em; padding: 10px 4px 4px; border-bottom: 1px solid var(--yellow); }
+  .chan { display: flex; gap: 10px; align-items: center; padding: 8px 4px; border-bottom: 1px solid rgba(59,91,209,.35); cursor: pointer; }
+  .chan.tuned { background: rgba(59,91,209,.35); }
+  .chan .n { color: var(--yellow); font-weight: bold; width: 44px; text-align: right; flex: none; }
+  .chan img { width: 32px; height: 32px; object-fit: cover; background: var(--deep); flex: none; }
+  .chan .name { font-weight: bold; font-size: 13px; }
+  .chan .show { color: var(--dim); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .chan .text { min-width: 0; flex: 1; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>UBER TV · REMOTE</h1><a href="#" id="forget" class="hidden">UNPAIR</a></header>
+
+  <section id="pair" class="pair hidden">
+    <p>On your computer, open Uber TV and press <b>T</b>. Enter the 6-digit code shown there, or scan its QR code.</p>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="······">
+    <div class="error" id="pairError"></div>
+    <button class="yellow wide" id="pairButton">PAIR THIS PHONE</button>
+  </section>
+
+  <section id="remote" class="hidden">
+    <div class="now">
+      <img id="logo" alt="" hidden>
+      <div class="lines">
+        <div><span class="ch" id="channel">TV IS OFF</span><span class="badge" id="badge"></span></div>
+        <div class="title" id="title">Press POWER to turn it on.</div>
+        <div class="when" id="when"></div>
+      </div>
+      <div class="typed" id="typed"></div>
+    </div>
+
+    <nav class="tabs"><a href="#" id="tabRemote" class="on">REMOTE</a><a href="#" id="tabGuide">GUIDE</a></nav>
+
+    <div id="keys">
+      <div class="power">
+        <button class="red" data-cmd="power">POWER</button>
+        <button data-cmd="mute" id="mute">MUTE</button>
+        <button data-cmd="options" title="Options: customize what's on the screen" aria-label="Options">⋯</button>
+      </div>
+
+      <div class="dpad">
+        <span></span><button data-cmd="up">▲</button><span></span>
+        <button data-cmd="left">◀</button><button class="ok yellow" data-cmd="ok">OK</button><button data-cmd="right">▶</button>
+        <span></span><button data-cmd="down">▼</button><span></span>
+      </div>
+
+      <div class="row4">
+        <button data-cmd="back">BACK</button>
+        <button data-cmd="guide">GUIDE</button>
+        <button data-cmd="full">FULL</button>
+        <button data-cmd="mini">MINI</button>
+      </div>
+
+      <div class="split">
+        <div class="numbers">
+          <button data-digit="1">1</button><button data-digit="2">2</button><button data-digit="3">3</button>
+          <button data-digit="4">4</button><button data-digit="5">5</button><button data-digit="6">6</button>
+          <button data-digit="7">7</button><button data-digit="8">8</button><button data-digit="9">9</button>
+          <button id="erase">⌫</button><button data-digit="0">0</button><button class="yellow" id="enter">GO</button>
+        </div>
+        <div class="rocker">
+          <button data-cmd="chup">CH ▲</button>
+          <span>CHANNEL</span>
+          <button data-cmd="chdown">CH ▼</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="guide" class="hidden"></div>
+
+  </section>
+</main>
+<script>
+  const $ = (s) => document.querySelector(s)
+  let state = null
+  let typed = ""
+  let typedTimer = null
+  let events = null
+
+  const post = (path, body) => fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Remote": "1" },
+    body: JSON.stringify(body || {}),
+  })
+
+  function show(view) {
+    $("#pair").classList.toggle("hidden", view !== "pair")
+    $("#remote").classList.toggle("hidden", view !== "remote")
+    $("#forget").classList.toggle("hidden", view !== "remote")
+    if (view === "pair") setTimeout(() => $("#code").focus(), 100)
+  }
+
+  async function start() {
+    const r = await fetch("/api/state").catch(() => null)
+    if (!r) return setTimeout(start, 3000)
+    if (r.status === 401) return show("pair")
+    render(await r.json())
+    show("remote")
+    listen()
+  }
+
+  function listen() {
+    if (events) events.close()
+    events = new EventSource("/api/events")
+    events.onmessage = (e) => render(JSON.parse(e.data))
+    events.onerror = () => { events.close(); events = null; setTimeout(start, 3000) }
+  }
+
+  async function pair() {
+    $("#pairError").textContent = ""
+    const r = await post("/api/pair", { code: $("#code").value }).catch(() => null)
+    if (r && r.ok) return start()
+    const why = r ? (await r.json().catch(() => ({}))).error : "Can't reach the guide."
+    $("#pairError").textContent = why || "That didn't work."
+  }
+
+  async function send(cmd, extra) {
+    if (navigator.vibrate) navigator.vibrate(8)
+    const r = await post("/api/cmd", Object.assign({ cmd }, extra || {})).catch(() => null)
+    if (r && r.status === 401) show("pair")
+  }
+
+  const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+
+  function logoUrl(id) { return /^UC[\w-]{22}$/.test(id || "") ? "/api/logo/" + id + ".jpg" : "" }
+
+  function render(s) {
+    const wasCode = !!(state && state.passcode)
+    state = s || {}
+    // the TV asks for the channel lock's passcode: the number pad types it
+    if (!!state.passcode !== wasCode) { typed = ""; clearTimeout(typedTimer); showTyped(); if (state.passcode) tab("remote") }
+    const now = state.on ? state.now : null
+    const where = { home: "HOME", library: "LIBRARY", guide: "GUIDE", settings: "SETTINGS", search: "SEARCH" }[state.screen] || ""
+    $("#channel").textContent = now ? (now.vod ? now.name || "On demand" : "CH " + now.number + " · " + now.name) : where || "TV IS OFF"
+    $("#title").textContent = now ? now.title : where ? "The arrows move, OK opens." : "Press POWER to turn it on."
+    $("#badge").textContent = state.mode === "mini" ? "MINI" : state.mode === "full" ? (now && now.vod ? "PLAYING" : "FULL SCREEN") : where
+    $("#mute").textContent = state.muted ? "UNMUTE" : "MUTE"
+    let when = ""
+    if (now && now.vod) when = (now.paused ? "Paused" : "On demand") + "  ·  ← → seek, OK pauses"
+    else if (now && now.live) when = "● LIVE"
+    else if (now && now.start) {
+      const left = Math.max(0, Math.ceil((now.end - Date.now() / 1000) / 60))
+      when = clock(now.start) + " – " + clock(now.end) + "  ·  " + left + " min left"
+    }
+    $("#when").textContent = when
+    const logo = $("#logo"), src = now ? logoUrl(now.channelId) : ""
+    logo.hidden = !src
+    if (src && logo.getAttribute("src") !== src) logo.src = src
+    renderGuide()
+  }
+
+  function renderGuide() {
+    const box = $("#guide")
+    box.textContent = ""
+    let category = null
+    const cats = new Set((state.channels || []).map((c) => c.category || ""))
+    for (const c of state.channels || []) {
+      const cat = c.category || ""
+      if (cat !== category && (cats.size > 1 || cat)) {
+        const band = document.createElement("div")
+        band.className = "band"
+        band.textContent = cat ? cat.toUpperCase() : "MY CHANNELS"
+        box.appendChild(band)
+      }
+      category = cat
+      const row = document.createElement("div")
+      row.className = "chan" + (state.on && state.now && state.now.number === c.number ? " tuned" : "")
+      const n = document.createElement("div"); n.className = "n"; n.textContent = c.number
+      const img = document.createElement("img"); img.alt = ""
+      const src = logoUrl(c.channelId)
+      if (src) { img.src = src; img.onerror = () => (img.style.visibility = "hidden") } else img.style.visibility = "hidden"
+      const text = document.createElement("div"); text.className = "text"
+      const name = document.createElement("div"); name.className = "name"; name.textContent = c.name
+      const showName = document.createElement("div"); showName.className = "show"
+      showName.textContent = c.live ? "● LIVE  " + (c.title || "") : (c.title || "")
+      text.append(name, showName)
+      row.append(n, img, text)
+      row.addEventListener("click", () => send("tune", { number: c.number }))
+      box.appendChild(row)
+    }
+  }
+
+  // The number pad: type a channel, it goes after a moment (or on GO). While
+  // the TV asks for the channel lock's passcode, it types that instead: dots,
+  // never the digits, and it goes only on GO.
+  function coding() { return !!(state && state.passcode) }
+  function showTyped() {
+    const box = $("#typed")
+    box.textContent = ""
+    if (typed || coding()) {
+      const label = document.createElement("small"); label.textContent = coding() ? "PASSCODE" : "CHANNEL"
+      box.append(label, document.createTextNode(coding() ? "•".repeat(typed.length) || " " : typed))
+    }
+    box.classList.toggle("on", !!typed || coding())
+  }
+  function typeDigit(d) {
+    if (typed.length >= (coding() ? 8 : 5)) return
+    typed += d
+    showTyped()
+    clearTimeout(typedTimer)
+    if (!coding()) typedTimer = setTimeout(goTyped, 1500)
+  }
+  function goTyped() {
+    clearTimeout(typedTimer)
+    if (coding()) { if (typed.length >= 4) send("code", { digits: typed }) }
+    else if (typed) send("tune", { number: Number(typed) })
+    typed = ""
+    showTyped()
+  }
+
+  // OK, the big button in the middle, puts on a number you've typed (or sends
+  // the passcode), as GO does; with nothing typed it's OK, as always
+  document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.cmd === "ok" && typed) return goTyped()
+    send(b.dataset.cmd)
+  }))
+  document.querySelectorAll("[data-digit]").forEach((b) => b.addEventListener("click", () => typeDigit(b.dataset.digit)))
+  $("#erase").addEventListener("click", () => { typed = typed.slice(0, -1); showTyped() })
+  $("#enter").addEventListener("click", goTyped)
+  $("#pairButton").addEventListener("click", pair)
+  $("#code").addEventListener("keydown", (e) => { if (e.key === "Enter") pair() })
+  $("#code").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); if (e.target.value.length === 6) pair() })
+
+  function tab(which) {
+    $("#tabRemote").classList.toggle("on", which === "remote")
+    $("#tabGuide").classList.toggle("on", which === "guide")
+    $("#keys").classList.toggle("hidden", which !== "remote")
+    $("#guide").classList.toggle("hidden", which !== "guide")
+  }
+  $("#tabRemote").addEventListener("click", (e) => { e.preventDefault(); tab("remote") })
+  $("#tabGuide").addEventListener("click", (e) => { e.preventDefault(); tab("guide") })
+  $("#forget").addEventListener("click", async (e) => {
+    e.preventDefault()
+    if (!confirm("Unpair this phone? You'll need a new code from the TV to use it again.")) return
+    await post("/api/forget").catch(() => null)
+    if (events) events.close()
+    show("pair")
+  })
+
+  start()
+</script>
+</body>
+</html>

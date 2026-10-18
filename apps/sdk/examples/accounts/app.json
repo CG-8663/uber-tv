@@ -1,0 +1,18 @@
+{
+  "id": "tv.example.accounts",
+  "name": "Accounts",
+  "version": "1.0.0",
+  "api": 4,
+  "kind": "app",
+  "author": "Uber TV",
+  "description": "An example: sign in to an online account that lists your servers, with a code or your username and password, then choose your server.",
+  "color": "#3a6b4c",
+  "main": "main.py",
+  "permissions": {
+    "net": ["accounts.example.com"],
+    "netWrite": { "accounts.example.com": ["POST"] },
+    "server": { "label": "Your media server", "fromSignIn": true },
+    "signIn": ["code", "password"],
+    "storage": true
+  }
+}

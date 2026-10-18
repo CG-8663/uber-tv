@@ -1,0 +1,468 @@
+{
+  "name": "Terminal",
+  "description": "tmux-style panes in your Omarchy theme's colors: a channel table, the preview, and the lineup of the channel under the cursor.",
+  "fonts": {
+    "body": [
+      "JetBrainsMono Nerd Font",
+      "Adwaita Mono",
+      "monospace"
+    ],
+    "display": [
+      "JetBrainsMono Nerd Font",
+      "Adwaita Mono",
+      "monospace"
+    ],
+    "mono": [
+      "JetBrainsMono Nerd Font",
+      "Adwaita Mono",
+      "monospace"
+    ]
+  },
+  "colors": {
+    "text": "omarchy.foreground",
+    "textDim": "omarchy.dark_foreground",
+    "accent": "omarchy.blue",
+    "timeline": "omarchy.red",
+    "cell": "omarchy.lighter_background",
+    "cellBorder": "omarchy.muted",
+    "channelCell": "omarchy.background",
+    "selected": "omarchy.selection",
+    "selectedText": "omarchy.bright_foreground",
+    "header": "#00000000",
+    "headerText": "omarchy.foreground",
+    "band": "#00000000",
+    "bandText": "omarchy.magenta",
+    "infoPanel": "#00000000",
+    "preview": "#000000",
+    "alert": "omarchy.red",
+    "bgTop": "omarchy.background",
+    "bgBottom": "omarchy.background",
+    "ltBg": "omarchy.dark_background",
+    "ltBorder": "omarchy.muted",
+    "ltNumber": "omarchy.yellow",
+    "ltChannel": "omarchy.dark_foreground",
+    "ltTitle": "omarchy.foreground",
+    "ltProgress": "omarchy.blue",
+    "ltTrack": "omarchy.muted",
+    "ltClock": "omarchy.blue",
+    "ltTime": "omarchy.dark_foreground",
+    "cardBackdrop": "#e6000000",
+    "cardName": "omarchy.yellow",
+    "cardStatus": "omarchy.dark_foreground",
+    "cardFrame": "omarchy.muted",
+    "boxBg": "omarchy.lighter_background",
+    "boxBorder": "omarchy.blue",
+    "scrim": "#b3000000",
+    "keyFace": "#00000000",
+    "keyText": "omarchy.blue",
+    "keyEdge": "#00000000",
+    "miniBar": "#e6000000"
+  },
+  "background": {
+    "mode": "none"
+  },
+  "home": {
+    "background": {
+      "mode": "none",
+      "dim": 0.6
+    }
+  },
+  "layout": {
+    "masthead": "bar",
+    "list": "table",
+    "footer": "status",
+    "info": false,
+    "clock": "masthead",
+    "hours24": true,
+    "tableWidth": 0.52,
+    "tableRowHeight": 1.55
+  },
+  "elements": {
+    "title": {
+      "color": "text",
+      "size": 0.85,
+      "weight": "normal",
+      "case": "lower",
+      "letterSpacing": 0
+    },
+    "topBar": {
+      "padding": 0.2
+    },
+    "barBadge": {
+      "fill": "omarchy.blue",
+      "padding": 0.3,
+      "text": {
+        "color": "omarchy.background",
+        "case": "lower"
+      }
+    },
+    "barLabel": {
+      "case": "lower"
+    },
+    "barValue": {
+      "case": "lower"
+    },
+    "pane": {
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "padding": 0.8
+    },
+    "paneTitle": {
+      "fill": "omarchy.background",
+      "padding": 0.3,
+      "text": {
+        "color": "omarchy.blue",
+        "case": "lower"
+      }
+    },
+    "tableHeader": {
+      "case": "lower"
+    },
+    "tableGroup": {
+      "color": "omarchy.magenta",
+      "weight": "normal",
+      "case": "lower"
+    },
+    "tableRow:current": {
+      "fill": "omarchy.selection"
+    },
+    "rowMarker": {
+      "color": "omarchy.blue"
+    },
+    "rowMarker:playing": {
+      "color": "omarchy.green"
+    },
+    "channelNumber": {
+      "color": "omarchy.yellow",
+      "size": 0.85,
+      "weight": "normal"
+    },
+    "channelName": {
+      "color": "text",
+      "size": 0.85,
+      "weight": "normal",
+      "case": "none"
+    },
+    "liveTag": {
+      "color": "omarchy.red",
+      "case": "lower",
+      "size": 0.85
+    },
+    "rowProgress": {
+      "fill": "omarchy.blue",
+      "track": "omarchy.muted",
+      "height": 0.3,
+      "width": 2.6
+    },
+    "rowProgress:live": {
+      "fill": "omarchy.red"
+    },
+    "modeBadge": {
+      "fill": "omarchy.green",
+      "padding": 0.3,
+      "text": {
+        "color": "omarchy.background"
+      }
+    },
+    "footer": {
+      "fill": "omarchy.lighter_background",
+      "padding": 0.3
+    },
+    "keycap": {
+      "fill": "none",
+      "border": "none",
+      "depth": 0,
+      "text": {
+        "color": "omarchy.blue",
+        "weight": "normal",
+        "case": "lower"
+      }
+    },
+    "keyLabel": {
+      "case": "lower",
+      "weight": "normal"
+    },
+    "box": {
+      "border": {
+        "width": "1px",
+        "color": "omarchy.blue"
+      }
+    },
+    "boxTitle": {
+      "size": 1.1,
+      "weight": "normal",
+      "case": "lower"
+    },
+    "listRow:current": {
+      "fill": "omarchy.selection"
+    },
+    "input": {
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      }
+    },
+    "input:focused": {
+      "border": {
+        "color": "omarchy.blue"
+      }
+    },
+    "lowerThird": {
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "height": 5,
+      "margin": 1.5,
+      "width": 0.7,
+      "align": "left",
+      "padding": 1
+    },
+    "ltNumber": {
+      "size": 2.6,
+      "weight": "normal"
+    },
+    "ltChannel": {
+      "case": "lower"
+    },
+    "ltTitle": {
+      "weight": "normal"
+    },
+    "ltClock": {
+      "weight": "normal"
+    },
+    "cardName": {
+      "weight": "normal",
+      "case": "lower"
+    },
+    "cardStatus": {
+      "weight": "normal",
+      "case": "lower"
+    },
+    "cardFrame": {
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      }
+    },
+    "homeTile": {
+      "fill": "none",
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "radius": 0,
+      "text": {
+        "case": "lower",
+        "weight": "normal",
+        "size": 1
+      }
+    },
+    "homeTile:current": {
+      "fill": "omarchy.selection",
+      "border": {
+        "color": "omarchy.blue"
+      },
+      "text": {
+        "color": "omarchy.foreground"
+      }
+    },
+    "homeCard": {
+      "radius": 0,
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      }
+    },
+    "homeCard:current": {
+      "border": {
+        "color": "omarchy.blue"
+      }
+    },
+    "posterCard": {
+      "radius": 0,
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      }
+    },
+    "posterCard:current": {
+      "border": {
+        "color": "omarchy.blue"
+      }
+    },
+    "homeCardTitle": {
+      "weight": "normal"
+    },
+    "posterTitle": {
+      "weight": "normal"
+    },
+    "heroKicker": {
+      "color": "omarchy.green",
+      "case": "lower",
+      "letterSpacing": 0
+    },
+    "heroTitle": {
+      "size": 2.6,
+      "weight": "bold"
+    },
+    "homeRowTitle": {
+      "color": "omarchy.magenta",
+      "case": "lower",
+      "weight": "normal",
+      "size": 1
+    },
+    "rowTitle": {
+      "color": "omarchy.magenta",
+      "case": "lower",
+      "weight": "normal",
+      "size": 1
+    },
+    "libraryTab": {
+      "case": "lower",
+      "size": 1.2,
+      "weight": "normal"
+    },
+    "libraryTab:current": {
+      "color": "omarchy.blue"
+    },
+    "statusChip": {
+      "radius": 0,
+      "fill": "none",
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "text": {
+        "case": "lower"
+      }
+    },
+    "liveBadge": {
+      "radius": 0,
+      "fill": "none",
+      "text": {
+        "color": "omarchy.red",
+        "case": "lower"
+      }
+    },
+    "cardBadge": {
+      "radius": 0
+    },
+    "vodBar": {
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      }
+    },
+    "panelHeader": {
+      "color": "omarchy.magenta",
+      "case": "lower",
+      "letterSpacing": 0
+    },
+    "menuCategory": {
+      "radius": 0,
+      "text": {
+        "case": "lower",
+        "weight": "normal",
+        "size": 1.4
+      }
+    },
+    "menuCategory:current": {
+      "fill": "none",
+      "text": {
+        "color": "omarchy.blue"
+      }
+    },
+    "menuCategory:focused": {
+      "fill": "omarchy.selection",
+      "shadow": "none",
+      "text": {
+        "color": "omarchy.foreground"
+      }
+    },
+    "menuRow": {
+      "fill": "none",
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "radius": 0,
+      "height": 3.2,
+      "text": {
+        "case": "lower",
+        "weight": "normal",
+        "size": 1.25
+      }
+    },
+    "menuRow:focused": {
+      "fill": "omarchy.selection",
+      "border": {
+        "color": "omarchy.blue"
+      },
+      "grow": 0,
+      "shadow": "none",
+      "text": {
+        "color": "omarchy.foreground"
+      }
+    },
+    "menuValue": {
+      "text": {
+        "case": "lower",
+        "size": 1.15,
+        "weight": "normal"
+      }
+    },
+    "menuValue:focused": {
+      "text": {
+        "color": "omarchy.blue"
+      }
+    },
+    "menuHeader": {
+      "text": {
+        "case": "lower",
+        "letterSpacing": 0,
+        "color": "omarchy.blue"
+      }
+    },
+    "toggle": {
+      "shape": "rect",
+      "radius": 0,
+      "fill": "none",
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "knob": "omarchy.muted",
+      "width": 3,
+      "height": 1.5
+    },
+    "toggle:on": {
+      "fill": "none",
+      "border": {
+        "color": "omarchy.green"
+      },
+      "knob": "omarchy.green"
+    },
+    "searchField": {
+      "fill": "none",
+      "border": {
+        "width": "1px",
+        "color": "omarchy.muted"
+      },
+      "radius": 0,
+      "caret": "omarchy.green",
+      "text": {
+        "weight": "normal",
+        "size": 1.6
+      }
+    },
+    "searchField:focused": {
+      "border": {
+        "color": "omarchy.blue"
+      },
+      "shadow": "none"
+    }
+  }
+}
