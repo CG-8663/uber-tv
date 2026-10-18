@@ -3,8 +3,7 @@
 Thanks for wanting to help. This guide says where changes belong, the rules
 every change follows, and how to test and send one.
 
-The repository is private for now, so contributions are by invitation. This
-guide is written for when it opens up, too.
+Contributions are welcome. Open an issue first, as described below.
 
 ## Talk first
 
