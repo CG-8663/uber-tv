@@ -10,6 +10,13 @@ versions are fixes. 1.0.0 will be the public release, once the plugin's name
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
+## [Unreleased]
+
+### Fixed
+
+- **The phone remote can't be paired from this computer.** A QR link opened here is refused, the same as a button press, and the link stays valid for the phone. A page on this computer can't use a paired phone's token either.
+- **Paired phones are saved under one lock,** so two pairing at once, or a phone dropping off while another is seen, can't lose one. The list is written to its own temporary file and renamed into place, and the pairing QR code is readable by you alone.
+
 ## [0.2.0-beta] - 2026-10-18
 
 The first public release.
