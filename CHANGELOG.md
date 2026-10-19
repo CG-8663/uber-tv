@@ -10,7 +10,7 @@ versions are fixes. 1.0.0 will be the public release, once the plugin's name
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
-## [Unreleased]
+## [0.2.1-beta] - 2026-10-18
 
 ### Added
 
