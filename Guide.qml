@@ -6185,20 +6185,11 @@ Item {
       recentSaver.restart()
     }
     root.tunedRow = r
-    if (ch.kind === "iptv") {
-      var listed = listings.at(ch.url, t)
-      root.onAir = listed ? { id: "", stream: ch.url, title: listed.title, start: listed.start, end: listed.end, live: true, iptv: true, epg: true }
-                          : { id: "", stream: ch.url, title: ch.live.title, start: t, end: t + 6 * 3600, live: true, iptv: true }
-    } else if (ch.live) {
-      root.onAir = { id: ch.live.id, title: ch.live.title, start: t, end: t + 6 * 3600, live: true }
-    } else {
+    if (ch.kind !== "iptv" && !ch.live) {
       root.rollDay()
       ch = root.channels[r]
-      var lineup = root.lineupOf(ch)
-      var here = Schedule.locate(lineup, t)
-      var item = lineup[here.index]
-      root.onAir = { id: item.id, title: item.title, start: t - here.offset, end: t - here.offset + item.duration }
     }
+    root.onAir = root.airing(ch, t)
     root.reception = "tuning"
     root.started = false
     identHold.restart()
@@ -6209,6 +6200,35 @@ Item {
       streamer.running = true   // play() runs once the streamer says where it is
     }
     return "ok"
+  }
+
+  // What a channel airs at t, as the TV plays it: an IPTV stream (its
+  // listing's show, if any), a live stream from its edge, or its schedule's
+  // video mid-show. The TV's tuning and Multiview's tiles both use it; a
+  // scheduled channel's day is rolled (rollDay) before asking.
+  function airing(ch, t) {
+    if (ch.kind === "iptv") {
+      var listed = listings.at(ch.url, t)
+      return listed ? { id: "", stream: ch.url, title: listed.title, start: listed.start, end: listed.end, live: true, iptv: true, epg: true }
+                    : { id: "", stream: ch.url, title: ch.live.title, start: t, end: t + 6 * 3600, live: true, iptv: true }
+    }
+    if (ch.live) return { id: ch.live.id, title: ch.live.title, start: t, end: t + 6 * 3600, live: true }
+    var lineup = root.lineupOf(ch)
+    var here = Schedule.locate(lineup, t)
+    var item = lineup[here.index]
+    return { id: item.id, title: item.title, start: t - here.offset, end: t - here.offset + item.duration }
+  }
+
+  // A channel's live stream ended: back to its videos, and look for the next
+  // one. The TV and Multiview's tiles both use it.
+  function liveEnded(r) {
+    root.liveChecked(root.liveUrlOf(root.channels[r].url), JSON.stringify({ entries: [] }))
+    root.checkLive(r)
+  }
+
+  // The streamer, for a Multiview tile that needs it before the TV did
+  function startStreamer() {
+    if (!root.streamBase) streamer.running = true
   }
 
   function streamUrl() {
@@ -7084,8 +7104,7 @@ Item {
         else { root.tune(root.tunedRow, 0, true); root.iptvRetried = true }
       } else if (mediaStatus === MediaPlayer.EndOfMedia && root.reception === "on" && root.onAir.live) {
         // The live stream ended: back to the channel's videos, and look again.
-        root.liveChecked(root.liveUrlOf(root.channels[root.tunedRow].url), JSON.stringify({ entries: [] }))
-        root.checkLive(root.tunedRow)
+        root.liveEnded(root.tunedRow)
         if (root.tune(root.tunedRow) !== "ok") root.reception = "lost"
       } else if (mediaStatus === MediaPlayer.EndOfMedia && root.reception === "on") {
         root.tune(root.tunedRow, Math.max(Date.now() / 1000, root.onAir.end + 1))

@@ -3,7 +3,10 @@
 
 GET /play/<video id>.m3u8 returns a master playlist with one video variant
 (the best H.264 up to 1080p) and the original audio track, pointing at
-YouTube's own media playlists. YouTube's full master lists every variant,
+YouTube's own media playlists. ?h=720, 480 or 360 asks for a smaller one (a
+Multiview tile): the best H.264 up to that height, or the smallest there is.
+YouTube's full master is cached per video and trimmed for each request, so
+one quality never stands in for another. YouTube's full master lists every variant,
 dubbed audio and a subtitle track FFmpeg rejects, which leaves it without a
 duration and so unseekable; this one is seekable, so the guide can join a
 video partway through. It is served over HTTP because FFmpeg won't follow a
@@ -56,6 +59,7 @@ except Exception:  # no python-gobject: no media keys, everything else works
     Gio = None
 
 MAX_HEIGHT = 1080
+HEIGHTS = (1080, 720, 480, 360)   # what ?h= may ask for
 KEEP_FOR = 3600  # YouTube's playlist URLs last about six hours
 
 SECRET = secrets.token_urlsafe(18)
@@ -78,7 +82,7 @@ def attrs(line):
     return dict(re.findall(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)', line.split(":", 1)[1]))
 
 
-def trim(master):
+def trim(master, max_height=MAX_HEIGHT):
     lines = master.splitlines()
     variants = []
     for i, line in enumerate(lines):
@@ -86,9 +90,10 @@ def trim(master):
             a = attrs(line)
             height = int(a.get("RESOLUTION", "0x0").split("x")[1])
             variants.append((height, "avc1" in a.get("CODECS", ""), line, lines[i + 1]))
-    fitting = [v for v in variants if v[0] <= MAX_HEIGHT] or variants
-    if not fitting:
+    if not variants:
         raise LookupError("no video variants")
+    smallest = min(v[0] for v in variants)
+    fitting = [v for v in variants if v[0] <= max_height] or [v for v in variants if v[0] == smallest]
     height, _, inf, uri = max(fitting, key=lambda v: (v[1], v[0]))
 
     group = attrs(inf).get("AUDIO", "").strip('"')
@@ -108,11 +113,12 @@ def trim(master):
     return "\n".join(out)
 
 
-def playlist(video_id):
+def playlist(video_id, height=MAX_HEIGHT):
+    """The trimmed master for a video at a height (from HEIGHTS)"""
     with lock:
         hit = cache.get(video_id)
     if hit and hit[0] > time.time():
-        return hit[1]
+        return trim(hit[1], height)
     with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noprogress": True}) as ydl:
         info = ydl.extract_info("https://www.youtube.com/watch?v=" + video_id, download=False)
     manifest = next((f["manifest_url"] for f in info.get("formats", [])
@@ -120,9 +126,10 @@ def playlist(video_id):
     if not manifest:
         raise LookupError("no HLS stream for " + video_id)
     with urllib.request.urlopen(manifest, timeout=20) as response:
-        text = trim(response.read().decode())
+        master = response.read(4 * 1024 * 1024).decode()
+    text = trim(master, height)   # a master that can't be trimmed isn't kept
     with lock:
-        cache[video_id] = (time.time() + KEEP_FOR, text)
+        cache[video_id] = (time.time() + KEEP_FOR, master)
     return text
 
 
@@ -222,8 +229,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not match or not hmac.compare_digest(match.group(1), SECRET):
             self.send_error(404)
             return
+        asked = urllib.parse.parse_qs(url.query).get("h", [str(MAX_HEIGHT)])[0]
+        if not asked.isdigit() or int(asked) not in HEIGHTS:
+            self.send_error(400)
+            return
         try:
-            body = playlist(match.group(2)).encode()
+            body = playlist(match.group(2), int(asked)).encode()
         except Exception as e:  # yt-dlp and network failures alike
             print(f"{match.group(2)}: {e}", file=sys.stderr, flush=True)
             self.send_error(502)
@@ -421,7 +432,12 @@ def listen(mpris):
             mpris.update(message["mpris"])
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-say(f"{server.server_address[1]} {SECRET}")
-threading.Thread(target=listen, args=(Mpris() if Gio else None,), daemon=True).start()
-server.serve_forever()
+def main():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    say(f"{server.server_address[1]} {SECRET}")
+    threading.Thread(target=listen, args=(Mpris() if Gio else None,), daemon=True).start()
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
