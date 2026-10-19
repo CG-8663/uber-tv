@@ -3084,6 +3084,11 @@ Item {
       if (root.appInFront && !root.appWindow.activated) root.appLeftAt = Date.now()
       root.appInFront = root.appWindow.activated
     }
+    // out of full screen (Super + F again, or Esc held) with the guide in a
+    // window: maximized again, not tiled
+    function onFullscreenChanged() {
+      if (root.appWindow && !root.appWindow.fullscreen && root.windowed) root.maximizeApp()
+    }
   }
 
   Connections {
