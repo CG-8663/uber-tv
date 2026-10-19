@@ -20,8 +20,6 @@ Contributions are welcome. Open an issue first, as described below.
 
 ## Rules every change follows
 
-These come from the Omarchy Plugin Marketplace:
-
 - **No new dependencies** beyond Omarchy's base packages: no new QML modules, and no Python beyond the standard library.
 - **No manual setup steps.** Installing the plugin is the only step.
 - **Network features are off** until the user turns them on.
@@ -30,7 +28,6 @@ These come from the Omarchy Plugin Marketplace:
 - **No `rm -rf`.** Delete only what the guide wrote, by name. The exceptions: Reset Uber TV deletes Uber TV's own three folders after moving them aside (never through a link), and a helper deletes its own private temporary folder.
 - **Private files are readable only by the user** (0600, folders 0700), and are written whole: a new file, checked, then swapped in.
 - **The plugin never fetches code on its own.** Third-party apps come only from files the user picks, and an update is downloaded only after the user agrees to exactly what will be fetched.
-- **Size limits:** at most 600 files and 4 MiB of text in the repository, no file over 450 KiB (pictures too: a big one goes in as JPEG, or as lossless WebP when it needs transparency), and `Guide.qml` at most 400 KiB.
 
 ## Security
 

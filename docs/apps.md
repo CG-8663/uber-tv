@@ -228,7 +228,7 @@ readable by you alone) are kept by the helper. At most 3 apps run at once, each
 with 320 MB, half a core and 48 tasks; one with nothing on the screen stops
 after 3 minutes, and one that keeps failing stops until you open it again.
 
-**For the Omarchy Plugin Marketplace's review (`service-management`).** The
+**How apps with code are run and stopped.** The
 guide runs each app with code in a systemd user scope of its own
 (`systemd-run --user --scope`, named `om-pg-app-<source>-<app>-<run>`) and
 stops it with `systemctl --user stop` or `kill` on that unit, so its memory,

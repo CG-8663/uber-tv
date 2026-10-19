@@ -4,9 +4,9 @@ Everything notable that's changed, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [semantic versioning](https://semver.org/).
 
-Until 1.0, minor versions (0.2, 0.3…) bring new features and may change how
-things work, including the app interface and the agent commands; patch
-versions are fixes. 1.0.0 will be the public release, once the plugin's name
+Until 1.0, minor versions (0.2, 0.3…) bring big new features and may change
+how things work, including the app interface and the agent commands; patch
+versions (0.2.1…) bring fixes and small additions. 1.0.0 will be the public release, once the plugin's name
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
