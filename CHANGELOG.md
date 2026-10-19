@@ -10,7 +10,7 @@ versions (0.2.1…) bring fixes and small additions. 1.0.0 will be the public re
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
-## [Unreleased]
+## [0.3.0-beta] - 2026-10-19
 
 ### Added
 
