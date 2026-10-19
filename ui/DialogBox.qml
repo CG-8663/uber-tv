@@ -44,7 +44,7 @@ Box {
     id: frame
     anchors.centerIn: parent
     width: Math.min(parent.width - dialogBox.u * 4,
-                    dialogBox.u * (guide.dialog === "help" ? 100 : guide.dialog === "pick" || guide.dialog === "notes" ? 76 : guide.dialog === "remote" || dialogBox.appBox ? 68 : 60))
+                    dialogBox.u * (guide.dialog === "help" ? 100 : guide.dialog === "pick" || guide.dialog === "notes" ? 76 : guide.dialog === "remote" || guide.dialog === "contributors" || dialogBox.appBox ? 68 : 60))
     height: box.implicitHeight + frame.padding * 2
     // a box taller than the screen shrinks to fit
     scale: Math.min(1, (dialogBox.height - dialogBox.u * 2) / Math.max(1, height))
@@ -69,6 +69,7 @@ Box {
                                           : guide.remoteStep === "off" ? "Turn off the phone remote?" : "Phone remote")
               : guide.dialog === "help" ? "Keys"
               : guide.dialog === "notes" ? "Release notes"
+              : guide.dialog === "contributors" ? "Contributors"
               : guide.dialog === "reset" || guide.dialog === "restore" ? guide.backups.title(guide.dialog)
               : guide.dialog === "agent" ? "Let AI agents help?"
               : guide.dialog === "demo" ? "Load the demo channels?"
@@ -99,6 +100,8 @@ Box {
               ? "Everything the guide does from the keyboard."
               : guide.dialog === "reset" || guide.dialog === "restore"
               ? guide.backups.text(guide.dialog)
+              : guide.dialog === "contributors"
+              ? (guide.contributors.length ? "Everyone who's helped build Uber TV, newest first. Thank you." : "No one yet.")
               : guide.dialog === "notes"
               ? (guide.updates.notesStatus === "loading" ? "Getting the release notes…"
                  : guide.updates.notesStatus === "failed" ? "Couldn't get the release notes."
@@ -1267,6 +1270,36 @@ Box {
           label: guide.backups.when(modelData.made)
           value: guide.backups.bytes(modelData.size)
           onActivated: guide.backups.choose(index)
+        }
+      }
+
+      // ---- contributors: ↑↓, and Enter (or a click) opens their GitHub page ----
+      ListView {
+        id: contributorList
+        visible: guide.dialog === "contributors" && guide.contributors.length > 0
+        width: parent.width
+        height: visible ? Math.min(guide.contributors.length, 8) * (Math.round(Look.px(guide.look.menuRow.height, dialogBox.u * dialogBox.rowSize)) + spacing) : 0
+        clip: true
+        spacing: Math.round(dialogBox.u * 0.4)
+        model: guide.dialog === "contributors" ? guide.contributors : []
+        currentIndex: guide.contributorPick
+        highlightRangeMode: ListView.ApplyRange
+        preferredHighlightBegin: 0
+        preferredHighlightEnd: height
+        boundsBehavior: Flickable.StopAtBounds
+        delegate: MenuRow {
+          required property int index
+          required property var modelData
+          guide: dialogBox.guide
+          width: contributorList.width
+          height: implicitHeight
+          size: dialogBox.rowSize
+          oneClick: true
+          kind: "opens"
+          focused: index === guide.contributorPick
+          label: "@" + modelData.handle
+          value: modelData.did + (modelData.version ? "  ·  " + modelData.version : "")
+          onActivated: { guide.contributorPick = index; guide.openContributor(index) }
         }
       }
 

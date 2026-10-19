@@ -269,6 +269,13 @@ To report a problem, see [SECURITY.md](SECURITY.md).
 - [How it works](docs/how-it-works.md)
 - [Changelog](CHANGELOG.md) and [contributing](CONTRIBUTING.md)
 
+## Contributors
+
+Thank you to everyone who's helped build Uber TV. They're also listed in
+Settings → About → Contributors.
+
+- [@calledtoconstruct](https://github.com/calledtoconstruct): phone remote pairing fix, and found the listings limits (0.2.1-beta)
+
 ## License
 
 [MIT](LICENSE)

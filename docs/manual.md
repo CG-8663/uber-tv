@@ -430,8 +430,9 @@ focused one does.
 - **About:** the version; update notifications (off until you turn them on),
   Check for updates and the release notes; where your settings and lists are
   kept, backing them up (to `~/Documents/Uber TV backups`) and restoring a
-  backup; how to reach Developer mode; and the credits on the nav rail, on or
-  off.
+  backup; how to reach Developer mode; Contributors, everyone who's helped
+  build Uber TV (Enter on one opens their GitHub page); and the credits on the
+  nav rail, on or off.
 - **Developer:** shown after you press Enter (or click) 7 times on the Uber TV
   row in About,
   and gone again once Developer mode is off: Developer mode and Install an

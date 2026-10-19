@@ -102,6 +102,15 @@ Item {
       event.accepted = true
       return
     }
+    // Contributors: ↑↓ pick one, Enter opens their GitHub page
+    if (guide.dialog === "contributors") {
+      if (k === Qt.Key_Escape || k === Qt.Key_Backspace) guide.closeDialog()
+      else if (k === Qt.Key_Up) guide.contributorPick = Math.max(0, guide.contributorPick - 1)
+      else if (k === Qt.Key_Down) guide.contributorPick = Math.max(0, Math.min(guide.contributors.length - 1, guide.contributorPick + 1))
+      else if (k === Qt.Key_Return || k === Qt.Key_Enter) guide.openContributor(guide.contributorPick)
+      event.accepted = true
+      return
+    }
     // Release notes: ↑↓ (a page with Page Up and Down) scroll them
     if (guide.dialog === "notes") {
       if (k === Qt.Key_Escape || k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Backspace) guide.closeDialog()

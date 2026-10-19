@@ -14,6 +14,7 @@ stable.
 
 ### Added
 
+- **Contributors** (Settings → About): everyone who's helped build Uber TV, and what they did. Enter on one opens their GitHub page.
 - **Apps in a window:** with Uber TV in a window, website apps (Netflix, HBO Max and the like) open maximized under the Omarchy bar instead of full screen. The hint over an app adds Super + F (full screen), and leaving full screen puts it back maximized. Super + W still closes them and brings Uber TV back.
 
 ### Fixed

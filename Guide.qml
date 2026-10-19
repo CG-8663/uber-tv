@@ -1329,6 +1329,20 @@ Item {
   property string defaultList: ""
   property string demoList: ""
   property string demoSaid: ""          // what Load the demo channels did
+  // Contributors (contributors.json, newest first), in Settings → About
+  property string contributorsList: ""
+  property int contributorPick: 0
+  readonly property var contributors: {
+    var parsed = null
+    try { parsed = JSON.parse(contributorsList || "[]") } catch (e) {}
+    var out = []
+    for (var i = 0; Array.isArray(parsed) && i < parsed.length && out.length < 500; i++) {
+      var c = parsed[i]
+      if (!c || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(String(c.handle))) continue
+      out.push({ handle: String(c.handle), did: String(c.did || "").slice(0, 80), version: String(c.version || "").slice(0, 20) })
+    }
+    return out
+  }
   // The demo lineup's channels (checked as your list is) and how many categories
   readonly property var demoLineup: {
     var parsed = null
@@ -4211,6 +4225,7 @@ Item {
         : pickBrowse ? [{ keys: ["↑", "↓"], label: "Pick" }, { keys: ["ENTER"], label: "Open" }, { keys: ["⌫"], label: "Up a folder" }, { keys: ["TAB"], label: "Search" }, { keys: ["ESC"], label: "Cancel" }]
         : [{ keys: [], label: "Type to search" }, { keys: ["↑", "↓"], label: "Pick" }, { keys: ["ENTER"], label: pickFolders ? "Use it" : pickApps || pickSignedApps ? "Check it" : "Open" }, { keys: ["TAB"], label: "Browse" }, { keys: ["ESC"], label: "Cancel" }])
     : dialog === "notes" ? [{ keys: ["↑", "↓"], label: "Scroll" }, { keys: ["ESC"], label: "Close" }]
+    : dialog === "contributors" ? (contributors.length ? [{ keys: ["↑", "↓"], label: "Move" }, { keys: ["ENTER"], label: "Open on GitHub" }] : []).concat([{ keys: ["ESC"], label: "Close" }])
     : dialog === "reset" || dialog === "restore" ? backupsItem.hints(dialog)
     : dialog === "help" ? [{ keys: ["ESC"], label: "Close" }]
     : dialog === "agent" ? [{ keys: ["ENTER"], label: "Turn on" }, { keys: ["N"], label: "No thanks" }, { keys: ["ESC"], label: "Later" }]
@@ -5459,6 +5474,7 @@ Item {
         { key: "devHow", label: "Developer mode", kind: "info" },
         { key: "backupSave", label: "Back up channels and settings", kind: "action" },
         { key: "backupRestore", label: "Restore a backup", kind: "opens" },
+        { key: "contributors", label: "Contributors", kind: "opens" },
         { key: "credit", label: "@devsec_ai", icon: "xlogo", kind: "info" },
         { key: "railCredits", label: "Credits on the nav rail", kind: "switch" }
       ])
@@ -5695,6 +5711,21 @@ Item {
     if (at >= 0) root.settingsCursor = at
   }
 
+  // Contributors (Settings → About): the list, and a GitHub page from it in
+  // your browser (full screen, the guide goes, as for the credits)
+  function openContributors() {
+    root.contributorPick = 0
+    root.dialog = "contributors"
+    keys.forceActiveFocus()
+  }
+
+  function openContributor(i) {
+    var c = root.contributors[i]
+    if (!c) return
+    Quickshell.execDetached(["/usr/share/omarchy/bin/omarchy-launch-browser", "https://github.com/" + c.handle])
+    if (!root.windowed) root.dismiss()
+  }
+
   // Release notes (Settings → About): what's new in the update, or in this version
   function openReleaseNotes() {
     updatesItem.loadNotes()
@@ -5788,6 +5819,7 @@ Item {
     if (key === "files") return root.settingsProblem ? "Settings not read" : "~/.config/om-pg"
     if (key === "devHow") return appsStore.developerShown || appsStore.developer ? "In Settings → Developer" : "Press Enter on Uber TV 7 times"
     if (key === "credit") return "W: devsecai.sh"
+    if (key === "contributors") return root.contributors.length ? plural(root.contributors.length, "person", "people") : "None yet"
     return ""
   }
 
@@ -5841,6 +5873,7 @@ Item {
     if (key === "clearList") return "Takes everything off My List. The movies and videos themselves stay. Press Enter twice."
     if (key === "clearSearches") return "Search (/) keeps your last few searches, to pick again. This forgets them. Press Enter twice."
     if (key === "about") return "A unified media center for Omarchy: YouTube, IPTV, EPG, On Demand Videos and Apps. Plugin marcho78.om-pg."
+    if (key === "contributors") return "Everyone who's helped build Uber TV, and what they did. Enter opens the list."
     if (key === "devHow") return "For testing apps you're building. Press Enter or click the Uber TV row 7 times, then turn it on in Settings → Developer. It needs apps on."
     if (key === "updateNotify" || key === "updateCheck" || key === "updateAvailable") return updatesItem.note(key)
     if (key === "backupSave" || key === "backupRestore" || key === "resetAll") return backupsItem.note(key)
@@ -5967,6 +6000,7 @@ Item {
       else if (row.key === "signedAppFile") { if (you) root.openPicker(false, "signedApps", false, false, true) }
       else if (row.key === "appFile") { if (you) root.openPicker(false, "apps", false, true) }
       else if (row.key === "releaseNotes") root.openReleaseNotes()
+      else if (row.key === "contributors") root.openContributors()
       else if (row.key === "backupRestore") { if (you) backupsItem.openRestore() }
       else if (row.key === "resetAll") { if (you) backupsItem.openReset() }
       return
@@ -7842,6 +7876,11 @@ Item {
   FileView {
     path: root.pluginDir + "/demo/channels.json"
     onLoaded: root.demoList = text()
+  }
+
+  FileView {
+    path: root.pluginDir + "/contributors.json"
+    onLoaded: root.contributorsList = text()
   }
 
   // The lineup a first run starts with
