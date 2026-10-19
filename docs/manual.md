@@ -620,7 +620,8 @@ the same country. A channel of one feed (a Pacific or West one, or a single
 station of a network) only takes listings of that feed, so no times are
 off; a channel without listings stays a LIVE block. The box shows how many
 channels each source matched. They're fetched about twice a day and with
-**R**, and kept for today and tomorrow.
+**R**, and kept for today and tomorrow. A fetch that runs out of time (15
+minutes) keeps the listings you had, and tries again about twelve hours on.
 
 With listings, an IPTV channel's row has its shows at their times; the info
 panel has the show, its times and what it's about; the channel banner has

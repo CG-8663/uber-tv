@@ -6,7 +6,10 @@
 The request: {"sources": [link or full path, ...], "channels": [{"url",
 "tvgId", "name"}, ...], "from": seconds, "to": seconds, "out": path}.
 Each source is downloaded (or read), unpacked (.gz, .xz) and read as it
-comes, so a big file never sits in memory. Its channels are matched to
+comes, so a big file never sits in memory (each channel and show is let
+go of once read). What a file may unpack to, what an .xz file may make its
+decoder reserve, and the whole run's time are limited: a small download
+can't unpack into hours of work or gigabytes of memory. Its channels are matched to
 yours: by tvg-id first, then by name within the same country, preferring
 the East (not Pacific or West) feed. The shows of matched channels between
 "from" and "to" are written to "out" as JSON, readable by you alone:
@@ -15,11 +18,14 @@ the East (not Pacific or West) feed. The shows of matched channels between
 category], ...]}}.
 
 Prints a JSON line as each source goes ({"source", "status"}), then
-{"done": true, "matched": n}.
+{"done": true, "matched": n}. Out of time, the shows you had stay (with any
+read in time), the sources not read say so, and the next try is the usual
+one, about twelve hours on.
 """
 
 import datetime
 import gzip
+import io
 import json
 import lzma
 import os
@@ -31,6 +37,11 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 MAX_DOWNLOAD = 400 * 1024 * 1024
+MAX_UNPACKED = 4 * 1024 * 1024 * 1024   # what one file may unpack to
+MAX_XZ_MEMORY = 128 * 1024 * 1024        # what an .xz file may make its decoder reserve
+RUN_SECONDS = 15 * 60                    # the whole run: downloads, unpacking, reading
+MAX_OLD = 64 * 1024 * 1024               # the listings kept from last time, read back
+MAX_ENTRY = 1024 * 1024                  # one channel or show (or anything else at the top), unpacked
 MAX_SHOWS = 400                     # per channel
 FEED_WORDS = {"pacific", "west", "mountain", "central"}
 GENERIC_FEEDS = {"", "sd", "hd", "fhd", "uhd", "4k", "east", "sd1", "hd1"}
@@ -39,6 +50,18 @@ NOISE = {"hd", "sd", "fhd", "uhd", "4k", "hdtv", "east", "channel", "tv", "the",
 
 def say(obj):
     print(json.dumps(obj), flush=True)
+
+
+class OutOfTime(OSError):
+    """The run's time is up"""
+
+
+deadline = float("inf")   # when the run's time is up (main sets it)
+
+
+def in_time():
+    if time.monotonic() > deadline:
+        raise OutOfTime("took too long")
 
 
 def words(text):
@@ -89,7 +112,8 @@ def fetch(source, folder):
         with urllib.request.urlopen(req, timeout=60) as resp, os.fdopen(fd, "wb") as out:
             got = 0
             while True:
-                chunk = resp.read(1 << 20)
+                in_time()
+                chunk = resp.read1(1 << 20)   # what's come, not a full MB: a slow drip can't hold it past the deadline
                 if not chunk:
                     break
                 got += len(chunk)
@@ -102,14 +126,97 @@ def fetch(source, folder):
     return path, True
 
 
+class XzReader(io.RawIOBase):
+    """An .xz file unpacked as it's read, its decoder held to MAX_XZ_MEMORY:
+    lzma.open has no limit, and a file of a few bytes can ask for 1.5 GB
+    before any of it is unpacked. Streams one after another are read in
+    turn, and what follows the last (padding, or anything that isn't another
+    whole stream) isn't an error."""
+
+    def __init__(self, path):
+        self.f = open(path, "rb")
+        self.dec = lzma.LZMADecompressor(lzma.FORMAT_XZ, memlimit=MAX_XZ_MEMORY)
+        self.later = False   # past the first stream
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        while True:
+            if self.dec.eof:
+                raw = self.dec.unused_data.lstrip(b"\0")   # zero padding may come between streams
+                while not raw:
+                    more = self.f.read(1 << 16)
+                    if not more:
+                        return 0
+                    raw = more.lstrip(b"\0")
+                self.dec = lzma.LZMADecompressor(lzma.FORMAT_XZ, memlimit=MAX_XZ_MEMORY)
+                self.later = True
+                try:
+                    data = self.dec.decompress(raw, len(b))
+                except lzma.LZMAError as e:
+                    if "memory" in str(e).lower():
+                        raise
+                    return 0
+            elif self.dec.needs_input:
+                raw = self.f.read(1 << 16)
+                if not raw:
+                    if self.later:
+                        return 0
+                    raise EOFError("the .xz file ends too soon")
+                data = self.dec.decompress(raw, len(b))
+            else:
+                data = self.dec.decompress(b"", len(b))
+            if data:
+                b[:len(data)] = data
+                return len(data)
+
+    def close(self):
+        self.f.close()
+        super().close()
+
+
+class Capped:
+    """A file as it unpacks, stopped past MAX_UNPACKED bytes, past MAX_ENTRY
+    bytes since the reader last finished an entry (since: it sets it back),
+    or once the run's time is up. ElementTree keeps an entry whole until it
+    ends, so without the entry limit one show of a million parts, or one
+    title of a gigabyte, would sit in memory."""
+
+    def __init__(self, raw):
+        self.raw = raw
+        self.got = 0
+        self.since = 0
+
+    def read(self, n=-1):
+        in_time()
+        chunk = self.raw.read(n if n is not None and 0 <= n <= 1 << 20 else 1 << 20)
+        self.got += len(chunk)
+        self.since += len(chunk)
+        if self.since > MAX_ENTRY:
+            raise OSError("not program listings: one entry is over %d KB" % (MAX_ENTRY // 1024))
+        if self.got > MAX_UNPACKED:
+            raise OSError("bigger than %s unpacked" % ("%d GB" % (MAX_UNPACKED >> 30) if MAX_UNPACKED >= 1 << 30 else "%d MB" % (MAX_UNPACKED >> 20)))
+        return chunk
+
+    def close(self):
+        self.raw.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
 def opened(path):
     with open(path, "rb") as f:
         magic = f.read(6)
     if magic[:2] == b"\x1f\x8b":
-        return gzip.open(path, "rb")
+        return Capped(gzip.open(path, "rb"))
     if magic == b"\xfd7zXZ\x00":
-        return lzma.open(path, "rb")
-    return open(path, "rb")
+        return Capped(io.BufferedReader(XzReader(path), 1 << 16))
+    return Capped(open(path, "rb"))
 
 
 def feed_words(*texts):
@@ -165,8 +272,18 @@ def read(path, matcher, start, end, taken):
     seen = 0
     wanted = None        # listings id -> [url], once the channels are read
     shows = {}
+    root = None
+    depth = 0
     with opened(path) as f:
-        for _, el in ET.iterparse(f, events=("end",)):
+        for event, el in ET.iterparse(f, events=("start", "end")):
+            if event == "start":
+                depth += 1
+                if root is None:
+                    root = el
+                continue
+            depth -= 1
+            if depth != 1:
+                continue   # a part of an entry (a channel or show inside one is just a part), or the root itself
             if el.tag == "channel":
                 seen += 1
                 xid = el.get("id") or ""
@@ -195,6 +312,8 @@ def read(path, matcher, start, end, taken):
                             if len(lst) < MAX_SHOWS:
                                 lst.append([a, b, title or "Untitled", desc, cat])
                 el.clear()
+            root.clear()   # a cleared element still hangs off the root: let go of it, so memory stays flat
+            f.since = 0
     return seen, len(shows), shows
 
 
@@ -211,7 +330,32 @@ def tidy(lst):
     return out
 
 
+def previous(path):
+    """The listings written last time: {} if there are none, None if they're
+    there but can't be read back (too big, or broken)"""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(MAX_OLD + 1)
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return None
+    if len(raw) > MAX_OLD:
+        return None
+    try:
+        old = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(old, dict):
+        return None
+    if not isinstance(old.get("shows"), dict):
+        old["shows"] = {}
+    return old
+
+
 def main():
+    global deadline
+    deadline = time.monotonic() + RUN_SECONDS
     if len(sys.argv) != 2:
         sys.exit("usage: om-pg-epg <request.json>")
     with open(sys.argv[1]) as f:
@@ -226,8 +370,13 @@ def main():
     start, end = int(req.get("from") or time.time() - 3 * 3600), int(req.get("to") or time.time() + 30 * 3600)
     matcher = Matcher(req.get("channels") or [])
     report, shows = [], {}
+    late = False
     for source in (req.get("sources") or [])[:20]:
         entry = {"url": source, "ok": False, "error": "", "channels": 0, "matched": 0, "shows": 0}
+        if late:
+            entry["error"] = "not read: out of time"
+            report.append(entry)
+            continue
         try:
             say({"source": source, "status": "fetching"})
             path, temporary = fetch(source, folder)
@@ -242,6 +391,9 @@ def main():
             entry.update(ok=True, channels=seen, matched=matched, shows=sum(len(v) for v in got.values()))
             if not seen:
                 entry.update(ok=False, error="not program listings (XMLTV)")
+        except OutOfTime:
+            late = True
+            entry["error"] = "took too long"
         except ET.ParseError:
             entry["error"] = "not program listings (XMLTV)"
         except (OSError, ValueError, EOFError, lzma.LZMAError) as e:
@@ -249,6 +401,16 @@ def main():
         report.append(entry)
         say({"source": source, "status": "done" if entry["ok"] else "failed", "matched": entry["matched"], "error": entry["error"]})
 
+    if late:
+        # out of time: the shows from last time stay, with any read in time over them;
+        # if they can't be read back, the file stays exactly as it is
+        old = previous(out_path)
+        if old is None:
+            say({"done": True, "matched": 0})
+            return
+        shows = dict(old["shows"], **shows)
+        if isinstance(old.get("from"), int) and isinstance(old.get("to"), int):
+            start, end = min(start, old["from"]), max(end, old["to"])
     data = {"version": 1, "fetched": int(time.time()), "from": start, "to": end, "sources": report, "shows": shows}
     fd, tmp = tempfile.mkstemp(prefix="epg-", suffix=".json", dir=folder)
     with os.fdopen(fd, "w") as f:

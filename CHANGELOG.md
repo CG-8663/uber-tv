@@ -16,6 +16,10 @@ stable.
 
 - **Apps in a window:** with Uber TV in a window, website apps (Netflix, HBO Max and the like) open maximized under the Omarchy bar instead of full screen. The hint over an app adds Super + F (full screen), and leaving full screen puts it back maximized. Super + W still closes them and brings Uber TV back.
 
+### Fixed
+
+- **Program listings can't run away with memory or time.** Each show is let go of once read, so memory stays flat however big the file (a 400,000-show file: 46 MB, down from 80); a file stops at 4 GB unpacked; an `.xz` file can't make the reader reserve more than 128 MB (a few bytes could ask for 1.5 GB); and a fetch stops after 15 minutes, keeping the listings you had. Found by [@calledtoconstruct](https://github.com/calledtoconstruct).
+
 ## [0.2.0-beta] - 2026-10-18
 
 The first public release.

@@ -77,7 +77,9 @@ touches.
   `ffprobe` for each one's length and `ffmpegthumbnailer` for its picture,
   once per video; both come with Omarchy), and, with program listings,
   `bin/om-pg-epg` (Python: downloads the listings you added, reads them as
-  they come and keeps your channels' shows), with the screen saver,
+  they come and keeps your channels' shows; a download stops at 400 MB, a
+  file at 4 GB unpacked, an `.xz` file can't make it reserve more than 128 MB,
+  and a run stops after 15 minutes, keeping the shows you had), with the screen saver,
   `bin/om-pg-apps saver-pictures`, `saver-take` and `saver-folder` (listing
   and checking its pictures, copying one before it's shown, making your folder),
   and `xdg-open` (your screen saver folder, in your file manager, when you
