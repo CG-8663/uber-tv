@@ -3,8 +3,7 @@
 Thanks for wanting to help. This guide says where changes belong, the rules
 every change follows, and how to test and send one.
 
-The repository is private for now, so contributions are by invitation. This
-guide is written for when it opens up, too.
+Contributions are welcome. Open an issue first, as described below.
 
 ## Talk first
 
@@ -106,7 +105,7 @@ python3 tests/snapshots.test.py   # snapshot files put in place whole, and the g
 python3 tests/saver.test.py   # the screen saver's pictures: links, fakes, sizes, depth, the cap, Omarchy's folders, your folder made only at home
 python3 tests/lock.test.py    # the channel lock's passcode: only a hash, changing it, wrong tries slowing down, a sound file
 python3 tests/epg.test.py     # program listings: plain, gzip and xz; the .xz memory cap, the unpacked cap, flat memory, the run's time limit
-python3 tests/remote.test.py  # the phone remote's commands: the passcode as text, 4 to 8 digits, only from a paired phone
+python3 tests/remote.test.py  # the phone remote's commands: the passcode as text, 4 to 8 digits, only from a paired phone; pairing only from a phone, and the device list saved under one lock
 python3 tests/jellyfin.test.py tests/appmedia.test.py tests/appplayback.test.py   # Jellyfin, media checks, playback
 QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input tests/qml   # the guide's side
 ```

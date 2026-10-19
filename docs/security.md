@@ -129,7 +129,8 @@ touches.
   with a short-lived single-use code, keeps a hash of each phone's token in
   `~/.config/om-pg/remotes.json` (readable by you alone), accepts a fixed set
   of remote commands and nothing else (no files, no links, no shell), and
-  rejects requests from other websites. It's plain HTTP: someone already on
+  rejects requests from other websites. A code or a QR link is refused from
+  this computer, the same as a button press. It's plain HTTP: someone already on
   your network who watches its traffic could copy a phone's token and change
   your channel. It stops when you turn it off or the shell exits.
 - **Changes the firewall only when you agree to it**, through the system's

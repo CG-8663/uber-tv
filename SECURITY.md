@@ -6,8 +6,6 @@ Please report security problems privately, never in a public issue.
 
 - **Use GitHub's private vulnerability reporting:** the repository's
   **Security** tab → **Report a vulnerability**.
-- **While the repository is private,** contact the maintainer,
-  [@marcho78](https://github.com/marcho78), directly on GitHub.
 
 Say what you found, how to reproduce it (the guide's version or commit, the
 steps, and what happens), and what you think it allows. A proof of concept

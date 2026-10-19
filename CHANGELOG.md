@@ -20,6 +20,8 @@ stable.
 ### Fixed
 
 - **Program listings can't run away with memory or time.** Each show is let go of once read, so memory stays flat however big the file (a 400,000-show file: 46 MB, down from 80); a file stops at 4 GB unpacked; an `.xz` file can't make the reader reserve more than 128 MB (a few bytes could ask for 1.5 GB); and a fetch stops after 15 minutes, keeping the listings you had. Found by [@calledtoconstruct](https://github.com/calledtoconstruct).
+- **The phone remote can't be paired from this computer.** A QR link opened here is refused, the same as a button press, and the link stays valid for the phone. A page on this computer can't use a paired phone's token either. By [@calledtoconstruct](https://github.com/calledtoconstruct) (#2).
+- **Paired phones are saved under one lock,** so two pairing at once, or a phone dropping off while another is seen, can't lose one. The list is written to its own temporary file and renamed into place, and the pairing QR code is readable by you alone.
 
 ## [0.2.0-beta] - 2026-10-18
 
