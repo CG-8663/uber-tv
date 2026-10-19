@@ -131,6 +131,8 @@ An agent working on the guide follows the agent skill and these rules.
 
 ## Pull requests
 
+Send pull requests to the `dev` branch; `main` only gets releases.
+
 Before you send one:
 
 - [ ] the issue it closes, or the plan it follows
