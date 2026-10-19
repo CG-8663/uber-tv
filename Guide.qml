@@ -3030,9 +3030,28 @@ Item {
     }
   }
 
+  // With the guide in a window, the app goes as the guide's window does:
+  // maximized under the bar (maximizeWindow's ask). False until Hyprland
+  // knows its window
+  function maximizeApp() {
+    var tops = Hyprland.toplevels ? Hyprland.toplevels.values : []
+    for (var i = 0; i < tops.length; i++) {
+      var t = tops[i]
+      if (!t || t.wayland !== root.appWindow) continue
+      var a = String(t.address || "")
+      if (!a) break
+      if (!/^0x/.test(a)) a = "0x" + a
+      Hyprland.dispatch('hl.dsp.window.fullscreen_state({ internal = 1, client = 1, window = "address:' + a + '" })')
+      return true
+    }
+    if (Hyprland.refreshToplevels) Hyprland.refreshToplevels()
+    return false
+  }
+
   // Once the guide's out of the way (its keyboard let go): the app in front,
-  // full screen, and asked again a moment later (a window just made can
-  // drop the first ask), unless you've gone somewhere else meanwhile
+  // full screen (maximized, with the guide in a window), and asked again a
+  // moment later (a window just made can drop the first ask), unless you've
+  // gone somewhere else meanwhile
   Timer {
     id: appFront
     property int n: 0
@@ -3041,8 +3060,11 @@ Item {
       if (!root.appWindow || root.opened) return
       if (n > 0 && root.appLeftAt > root.appTakenAt) return
       root.appWindow.activate()
-      root.appWindow.fullscreen = true
+      var asked = true
+      if (root.windowed) asked = root.maximizeApp()
+      else root.appWindow.fullscreen = true
       if (n++ === 0) { root.appHint = true; appHintTimer.restart(); interval = 600; restart() }
+      else if (!asked && n < 8) { interval = 250; restart() }
       else interval = 150
     }
   }
@@ -8330,6 +8352,7 @@ Item {
         id: hintKeys
         anchors.centerIn: parent
         model: [{ keys: ["SUPER", "+", "W"], label: "Closes " + (appHintWindow.app ? appHintWindow.app.name : "it") + " and brings back the guide" }]
+               .concat(root.windowed ? [{ keys: ["SUPER", "+", "F"], label: "Full screen" }] : [])
         size: appHintWindow.hu * 1.55
         capStyle: root.look.keycap
         labelStyle: root.look.keyLabel

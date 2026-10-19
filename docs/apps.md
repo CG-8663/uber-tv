@@ -19,7 +19,8 @@ you see who made it, where it's from, and what it asks for, in plain words
 installed until you say so, and what installs is exactly what you were shown.
 
 **Your apps.** On the Apps screen (the rail) or Home, **Enter** (or a click)
-opens one full screen, with no browser bar, and the guide makes way. **Super +
+opens one full screen (with the guide in a window, maximized under the bar
+instead), with no browser bar, and the guide makes way. **Super +
 W** closes it and brings the guide back where you were; the guide's own key
 (or **Back** on the phone remote) brings the guide back over it while it stays
 on, marked **ON NOW** on the Apps screen, where **Enter** goes back to it and
@@ -75,8 +76,8 @@ make it; an app from a file shows a small page on its tile, on Home and on
 its band, and opens only while Developer mode is on.
 
 **What an app is.** Most apps are *launchers*: a website the guide opens in
-your browser's app window (`omarchy-launch-webapp`) and puts full screen, with
-nothing run on this computer. It's your browser because the big streaming
+your browser's app window (`omarchy-launch-webapp`) and puts full screen (or
+maximized, with the guide in a window), with nothing run on this computer. It's your browser because the big streaming
 services only play there: they need its DRM (Widevine), which the shell's own
 web engine doesn't have, and you stay signed in as you are in it. It can't see
 your files, your channels or other apps, and you sign in on the website itself,

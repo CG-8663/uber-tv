@@ -121,6 +121,7 @@ nearly full screen, maximized under the Omarchy bar, an ordinary window on
 its desktop. Go to another desktop to work (SUPER+2, say) and the guide stays
 where it was, playing; come back and it's there. Its key on another desktop
 brings it to you rather than closing it. **W** again goes back to full screen.
+Website apps you open follow it: in a window, maximized under the bar.
 
 **Window** (or **Full screen**) and **Turn off** are at the foot of the nav
 rail, under Settings, drawn like its other parts: click one, or go past

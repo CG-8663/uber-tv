@@ -224,7 +224,7 @@ Drag it to move it, scroll on it to resize it.
 
 | Key | Does |
 |---|---|
-| Enter | Open one, full screen |
+| Enter | Open one, full screen or in a window, like Uber TV |
 | I | What it's allowed, and Remove |
 | G | Get apps |
 | X | Close the one that's on |
