@@ -1,12 +1,14 @@
 import QtQuick
+import Quickshell
 import "ui"
 
 // Uber TV's own updates (Settings → About): whether a newer version is out,
 // asked of the git address it was installed from (bin/om-pg-update), and
 // its release notes. Update notifications are off until you turn them on,
 // there or on the strip the first time; then it looks when the shell starts
-// and 12 hours after each look. Check for updates looks once, on or off.
-// Nothing is installed here: omarchy plugin update does that.
+// and 6 hours after each look. Check for updates looks once, on or off.
+// Nothing is installed here: Update now opens a terminal running Omarchy's
+// own omarchy plugin update, which shows what changes and asks first.
 Item {
   id: updates
 
@@ -115,10 +117,25 @@ Item {
   // And what they're about, under the rows
   function note(key) {
     if (key === "updateNotify" || key === "updateCheck")
-      return "Looks for a new version of Uber TV when it starts and about every 12 hours." + (updates.checkedAt ? " Last checked " + updates.ago(updates.checkedAt) + "." : "")
+      return "Looks for a new version of Uber TV when it starts and about every 6 hours." + (updates.checkedAt ? " Last checked " + updates.ago(updates.checkedAt) + "." : "")
     if (key === "updateAvailable")
-      return "To update, run omarchy plugin update " + ((guide.manifest && guide.manifest.id) || "marcho78.om-pg") + " in a terminal, then restart the shell."
+      return "Version " + updates.latest + " is out (Release notes says what's new). Enter opens a terminal that shows what changes and asks before updating; once it's updated, the shell restarts with the new version."
     return ""
+  }
+
+  // Update now: Omarchy's own update in a floating terminal (it shows the
+  // changes, asks, checks the plugin and rolls back a bad one), then a shell
+  // restart if the plugin's version changed, so the new code runs. Full
+  // screen, the guide goes so the terminal shows.
+  function updateNow() {
+    var id = (guide.manifest && guide.manifest.id) || ""
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) || id.indexOf("..") >= 0) return
+    var dir = "'" + String(guide.pluginDir).replace(/'/g, "'\\''") + "'"
+    var head = "/usr/bin/git -C " + dir + " rev-parse HEAD 2>/dev/null"
+    Quickshell.execDetached(["/usr/share/omarchy/bin/omarchy-launch-floating-terminal-with-presentation",
+      "before=$(" + head + "); /usr/share/omarchy/bin/omarchy-plugin-update " + id
+      + " && [ \"$(" + head + ")\" != \"$before\" ] && /usr/share/omarchy/bin/omarchy-restart-shell"])
+    if (!guide.windowed) guide.dismiss()
   }
 
   // Release notes: what's new in the newer version, or what's in this one
@@ -189,7 +206,7 @@ Item {
     }
   }
 
-  // A look as the shell starts (once settings are read), then 12 hours
+  // A look as the shell starts (once settings are read), then 6 hours
   // after each one
   Timer {
     interval: 20000
@@ -198,7 +215,7 @@ Item {
   }
   Timer {
     id: every
-    interval: 12 * 3600 * 1000
+    interval: 6 * 3600 * 1000
     repeat: true
     running: updates.on
     onTriggered: updates.check(false)

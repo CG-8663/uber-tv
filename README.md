@@ -79,13 +79,15 @@ come with it. If `omacut` was removed, run
 
 ## Update
 
+Turn on **update notifications** in Settings → About to hear about new
+versions, with their release notes. When one is out, **Update now** there
+opens a terminal that shows what changes and asks before updating, then
+restarts the shell. Or, in a terminal:
+
 ```bash
 omarchy plugin update marcho78.om-pg
 omarchy restart shell
 ```
-
-Turn on **update notifications** in Settings → About to hear about new
-versions, with their release notes.
 
 ## Uninstall
 

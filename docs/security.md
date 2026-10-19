@@ -151,12 +151,14 @@ touches.
 - **Looks for a newer Uber TV only if you turn update notifications on**
   (Settings → About), or when you press Check for updates: `git ls-remote
   --tags` to the address it was installed from (names only; nothing is
-  downloaded), when the shell starts and every 12 hours, never asking for a
+  downloaded), when the shell starts and every 6 hours, never asking for a
   password (`GIT_TERMINAL_PROMPT=0`, ssh in batch mode), 25 s and 1 MB at
   most. A newer version's release notes fetch its one commit, and of its
   files only `CHANGELOG.md` where the server allows it, into a private folder
   in `$XDG_RUNTIME_DIR` removed right after (`bin/om-pg-update`). Nothing is
-  installed: updating stays `omarchy plugin update`.
+  installed by Uber TV: Update now opens a terminal running Omarchy's own
+  `omarchy plugin update`, which shows the changes and asks first, and
+  restarts the shell only if the plugin changed.
 - **Backs up only when you ask** (Settings → About): one file in `Uber TV
   backups` in your Documents folder, readable by you alone in a folder only
   you can open, written whole: your channels, settings, library, Continue

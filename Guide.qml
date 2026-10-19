@@ -5468,7 +5468,7 @@ Item {
         { key: "about", label: "Uber TV", kind: "info" },
         { key: "updateNotify", label: "Update notifications", kind: "switch" },
         { key: "updateCheck", label: "Check for updates", kind: "action" }
-      ].concat(updatesItem.available ? [{ key: "updateAvailable", label: "Update available", kind: "info" }] : []).concat([
+      ].concat(updatesItem.available ? [{ key: "updateAvailable", label: "Update now", kind: "opens" }] : []).concat([
         { key: "releaseNotes", label: "Release notes", kind: "opens" },
         { key: "files", label: "Your settings and lists", kind: "info" },
         { key: "devHow", label: "Developer mode", kind: "info" },
@@ -6000,6 +6000,7 @@ Item {
       else if (row.key === "signedAppFile") { if (you) root.openPicker(false, "signedApps", false, false, true) }
       else if (row.key === "appFile") { if (you) root.openPicker(false, "apps", false, true) }
       else if (row.key === "releaseNotes") root.openReleaseNotes()
+      else if (row.key === "updateAvailable") { if (you) updatesItem.updateNow() }
       else if (row.key === "contributors") root.openContributors()
       else if (row.key === "backupRestore") { if (you) backupsItem.openRestore() }
       else if (row.key === "resetAll") { if (you) backupsItem.openReset() }

@@ -10,6 +10,16 @@ versions (0.2.1…) bring fixes and small additions. 1.0.0 will be the public re
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
+## [Unreleased]
+
+### Added
+
+- **Update now** (Settings → About, when an update is out; the update mark on the nav rail goes to it): opens a terminal running Omarchy's own `omarchy plugin update`, which shows what changes and asks first; once it's updated, the shell restarts with the new version.
+
+### Changed
+
+- **Update notifications look every 6 hours** (and when the shell starts), not every 12.
+
 ## [0.2.1-beta] - 2026-10-18
 
 ### Added

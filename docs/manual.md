@@ -428,7 +428,8 @@ focused one does.
   third-party app. See [Apps](apps.md).
 - **Screen saver:** see [Screen saver](#screen-saver).
 - **About:** the version; update notifications (off until you turn them on),
-  Check for updates and the release notes; where your settings and lists are
+  Check for updates, Update now (when one is out: a terminal that shows what
+  changes and asks first) and the release notes; where your settings and lists are
   kept, backing them up (to `~/Documents/Uber TV backups`) and restoring a
   backup; how to reach Developer mode; Contributors, everyone who's helped
   build Uber TV (Enter on one opens their GitHub page); and the credits on the
