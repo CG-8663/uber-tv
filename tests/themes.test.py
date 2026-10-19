@@ -194,6 +194,16 @@ try:
     check("the answer is the theme as written", res["theme"] == saved and res["old"] == [], res)
     check("and it loads whole", loads_whole(folder))
 
+    # Multiview's background picture is copied in and named, as the others
+    res = apps.do_theme_save(json.dumps({"dir": themes, "id": "mv", "theme": {"name": "MV", "colors": {"text": "#ffffff"},
+                                                                            "multiview": {"background": {"mode": "image", "image": p2, "dim": 0.5}}}}).encode())
+    mvf = os.path.join(themes, "mv")
+    mvs = json.load(open(os.path.join(mvf, "theme.json"))) if res.get("outcome") == "saved" else {}
+    mvpic = ((mvs.get("multiview") or {}).get("background") or {}).get("image", "")
+    check("Multiview's picture: copied in, and theme.json names the copy", res.get("outcome") == "saved" and mvpic in os.listdir(mvf)
+          and apps.PIC_NAME.match(mvpic) and open(os.path.join(mvf, mvpic), "rb").read() == open(p2, "rb").read(), (res, mvs))
+    shutil.rmtree(mvf)
+
     # ---- a failure at each step changes nothing ---------------------------------------
     before = files(folder)
     steps = ["create:copy", "sync", "create:tmp", "dirsync:neon", "readback", "rename"]

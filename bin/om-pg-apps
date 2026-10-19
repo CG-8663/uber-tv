@@ -3578,8 +3578,10 @@ def theme_pictures(theme):
                 out.append((spec, "src"))
     home = theme.get("home")
     apps = theme.get("apps")
+    multiview = theme.get("multiview")
     for part in (theme.get("background"), home.get("background") if isinstance(home, dict) else None,
-                 apps.get("background") if isinstance(apps, dict) else None):
+                 apps.get("background") if isinstance(apps, dict) else None,
+                 multiview.get("background") if isinstance(multiview, dict) else None):
         if isinstance(part, dict) and isinstance(part.get("image"), str) and part["image"]:
             out.append((part, "image"))
     return out

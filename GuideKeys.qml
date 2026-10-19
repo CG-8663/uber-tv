@@ -19,6 +19,8 @@ Item {
     // the channel lock's box takes every key while it's up
     if (guide.channelLock && guide.channelLock.boxUp) { guide.channelLock.key(event); event.accepted = true; return }
     if (guide.sources && guide.sources.boxUp) { guide.sources.key(event); event.accepted = true; return }
+    // Multiview takes every key while it's up (ui/Multiview.qml)
+    if (guide.multiview && guide.multiview.active && !guide.dialog) { guide.multiview.key(event); event.accepted = true; return }
     // any key you press ends an agent's open of an app (AppView.agentOpen)
     if (guide.appView && guide.appView.agentOpen) guide.appView.userActs()
     // an app's coming up: Esc stops waiting for it
@@ -458,13 +460,23 @@ Item {
       else if (k === Qt.Key_I || k === Qt.Key_Up || k === Qt.Key_Down) guide.showVodBar()
       else if (k === Qt.Key_P) guide.goPip()
       else return
+    } else if (guide.watching && guide.bannerOptions) {
+      // the banner's choices (I or Space): ← → choose, Enter picks, Esc or ↓ hides
+      if (k === Qt.Key_Left) guide.moveBannerAct(-1)
+      else if (k === Qt.Key_Right) guide.moveBannerAct(1)
+      else if (k === Qt.Key_Return || k === Qt.Key_Enter) guide.pickBannerAct()
+      else if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_Down || k === Qt.Key_I || k === Qt.Key_Space) guide.hideBanner()
+      else if (k === Qt.Key_Up || k === Qt.Key_PageUp) { guide.hideBanner(); guide.surf(1) }
+      else if (k === Qt.Key_PageDown) { guide.hideBanner(); guide.surf(-1) }
+      else if (k === Qt.Key_P) { guide.hideBanner(); guide.goPip() }
+      else return
     } else if (guide.watching) {
       if (k === Qt.Key_Escape && guide.homeEnabled) guide.turnOff()   // back to Home or the guide, the TV off
       else if (k === Qt.Key_Escape) guide.dismiss()
       else if (k === Qt.Key_Up || k === Qt.Key_PageUp) guide.surf(1)
       else if (k === Qt.Key_Down || k === Qt.Key_PageDown) guide.surf(-1)
       else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_G) guide.showGuide()
-      else if (k === Qt.Key_I || k === Qt.Key_Space) guide.showBanner()
+      else if (k === Qt.Key_I || k === Qt.Key_Space) guide.openBannerOptions()
       else if (k === Qt.Key_P) guide.goPip()
       else return
     } else {

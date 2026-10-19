@@ -10,6 +10,20 @@ versions (0.2.1…) bring fixes and small additions. 1.0.0 will be the public re
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
+## [Unreleased]
+
+### Added
+
+- **Multiview:** up to four channels at once, live, scheduled or IPTV, the sound from the one you pick. From a channel's banner (I or Space while watching, then Multiview): it starts with that channel and the Add a channel list (type a number to jump to it). Side by side, featured (the first channel big), grid or a row; the arrows move the sound, Enter puts a tile full screen (with its own options), PgUp PgDn change a tile's channel, Del takes one off, L switches the layout, Esc exits to the channel with the sound. Each tile asks only for the quality its size needs (720p side by side, 480p in a grid, 1080p and 360p featured), and only the tile with the sound has audio.
+- **The channel banner's options** (I or Space while watching): Multiview, Mini player, Guide and Mute.
+- **Multiview's background** (the gear in its bar): as it is, a color, the theme's background, or a custom wallpaper (Omarchy's or a picture of your own). Its tiles' frames, labels and badge are parts in the style panel, and themes carry the background too.
+- **Agent commands for Multiview:** `multiview "101,501,801"`, `multiviewAdd`, `multiviewRemove`, `multiviewLayout`, `multiviewSound`, `multiviewClose` and `multiviewBackground`; `state` reports Multiview. Locked channels are refused.
+- Media keys, the phone remote, keep-awake, the screen saver and the channel lock all work with Multiview; turning the TV off, closing or playing something else stops every tile.
+
+### Changed
+
+- **The phone remote in full screen:** ▲ opens the banner's choices (◀ ▶ choose, OK picks, ▼ or BACK closes them), and ◀ ▶ change the channel; ▲ ▼ no longer change it (CH▲ CH▼ and the number pad still do). A full-screen Multiview tile works the same.
+
 ## [0.2.2-beta] - 2026-10-18
 
 ### Added

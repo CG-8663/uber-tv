@@ -18,6 +18,7 @@ Item {
   property string reception: "off"   // off, locked, tuning, on, lost
   property bool started: false
   property bool retried: false       // an IPTV stream that dropped is tried once more
+  property bool paused: false        // held paused: loading again (a new quality) doesn't play it
   readonly property alias player: player
   // Really playing (for keep-awake and the screen saver): on, moving, not stalled
   readonly property bool playing: reception === "on" && player.playbackState === MediaPlayer.PlayingState
@@ -92,6 +93,12 @@ Item {
     if (best >= 0 && best !== player.activeVideoTrack) player.activeVideoTrack = best
   }
 
+  onPausedChanged: {
+    if (tile.reception !== "tuning" && tile.reception !== "on") return
+    if (tile.paused) player.pause()
+    else if (tile.started) player.play()
+  }
+
   // A new size: an IPTV stream changes track; a YouTube one tunes again at
   // the new quality, where it is now
   onQualityChanged: {
@@ -121,8 +128,9 @@ Item {
         var into = Date.now() / 1000 - tile.onAir.start
         if (!tile.onAir.live && into > 3) player.position = Math.floor(into * 1000)
         if (tile.onAir.iptv) tile.pickTrack()
-        player.play()
         tile.started = true
+        if (tile.paused) { tile.reception = "on"; watchdog.stop() }   // loaded and held: paused, not a failed tune
+        else player.play()
       } else if (mediaStatus === MediaPlayer.BufferedMedia && tile.reception === "tuning" && tile.started) {
         tile.reception = "on"
         watchdog.stop()

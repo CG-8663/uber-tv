@@ -59,7 +59,7 @@ Watching full screen:
 |-------------|---------------------------|
 | ↑ ↓         | Channel up, channel down  |
 | Enter / G   | Guide (the TV keeps playing in the preview box) |
-| I / Space   | Channel banner            |
+| I / Space   | Channel banner, with its options: [Multiview](#multiview), Mini player, Guide, Mute (← → choose, Enter picks; it hides after 10 seconds) |
 | P           | Mini player               |
 | M           | Mute                      |
 | Esc         | TV off, back to Home or the guide (with Home off: close) |
@@ -447,6 +447,65 @@ out. The rows, switches and parts are themed like the rest (the menu parts in
 (categories, the file and folder picker, the phone remote, the key list) and
 the style panel use them too.
 
+## Multiview
+
+Up to four channels at once, the picture from each and the sound from one.
+Any channel works: live, scheduled (a YouTube channel's videos on its
+schedule, joined where the show is now) or IPTV.
+
+**Getting there.** While watching a channel full screen, press **I** or
+**Space**: the banner shows its options. **Multiview** is the first; **Enter**
+starts it with the channel that's on, and the *Add a channel* list opens
+beside it: ↑↓ choose (or type a channel's number to jump to it), **Enter**
+adds, **Esc** when you have enough. Esc with nothing added goes back to that
+channel.
+
+**Layouts.** Two channels: side by side, or featured. Three: featured (the
+first channel big, two beside it), grid, or a row. Four: grid, or featured.
+Adding or taking off a channel puts its count's first layout on; **L** (or
+*Layout* in the bar) switches.
+
+| Key | Does |
+|-----|------|
+| ↑ ↓ ← → | Move the sound to the next tile that way (it has the thicker frame and a *Sound* badge) |
+| ↑ from the top row | The bar: *+ Add channel*, *Layout*, *Exit Multiview* and the gear (← → choose, Enter picks, ↓ back) |
+| Enter | That tile full screen |
+| PgUp PgDn | The selected tile's channel (skipping ones on other tiles) |
+| Del | Take the tile off (with one left, Multiview closes and it plays full screen) |
+| L | The next layout |
+| M | Mute |
+| K | Hide or show the key hints |
+| Esc | Exit: the channel with the sound plays full screen |
+
+**A tile full screen.** ↑↓ change its channel, **I** or **Space** shows its
+banner with *Back to Multiview*, *Change channel*, *Take off Multiview* and
+*Guide* (that channel in the guide), and **Esc** goes back to the tiles. The
+others keep playing.
+
+**The background.** The gear at the end of the bar holds what's behind the
+tiles: *As it is* (the theme's), *A color* (the color picker: arrows,
+PgUp PgDn for the hue, Enter keeps, Esc leaves it as it was), *The theme's
+background* (its picture), or *A custom wallpaper* (your Omarchy wallpaper,
+or a picture of your own). The tiles' frames and labels are parts in the
+style panel (**S** → *Parts* → MULTIVIEW), and themes and
+[AI agents](agents.md) can set all of it.
+
+**Quality.** Each tile asks only for what its size needs: 720p side by side,
+480p in a grid or row, 1080p for the big featured tile and 360p for the small
+ones, 1080p full screen.
+
+**Media keys and the phone.** Play/Pause pauses and resumes every tile,
+Next/Previous change the selected tile's channel, and Stop turns the TV off.
+On the phone remote the d-pad, OK and BACK work as the keys (on a
+full-screen tile, ▲ opens its banner's choices, ▼ closes them and ◀ ▶ change
+its channel), CH▲ CH▼ as PgUp PgDn, ⋯ as I, a number puts that channel on
+the selected tile (in the *Add a channel* list it jumps there), GUIDE goes to
+the guide, and POWER turns the TV off.
+
+A locked channel asks for the passcode before it goes on a tile, and a tile
+whose channel gets locked stops. Turning the TV off, closing Uber TV, or
+playing something else stops every tile.
+
 ## Mini player
 
 Press **P** in the guide (for the highlighted channel) or while watching full
@@ -482,7 +541,9 @@ and a number pad (type 101, and you're on channel 101: it goes after a moment, o
 with every channel and what it's airing; tap one to watch it. No app.
 
 On Home and in the library the d-pad moves and OK opens; playing a movie,
-← → seek and OK pauses.
+← → seek and OK pauses. Watching a channel full screen, ↑ opens the banner's
+choices (← → choose, OK picks, ↓ or BACK closes them), ← → change the
+channel, and OK shows the banner.
 
 It is **off** until you turn it on. Press **T** (on Home or in the guide), or
 open Settings (**,**) and choose *Phone remote*:

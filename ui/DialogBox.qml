@@ -931,7 +931,7 @@ Box {
               pickList.positionViewAtBeginning()
             }
             Keys.onPressed: function(event) {
-              if (event.key === Qt.Key_Escape) guide.pickImages && guide.pickArea !== "home" ? guide.backToStyle() : guide.closeDialog()
+              if (event.key === Qt.Key_Escape) guide.pickImages && guide.pickArea !== "home" && guide.pickArea !== "multiview" ? guide.backToStyle() : guide.closeDialog()
               else if (event.key === Qt.Key_Up) guide.movePick(-1)
               else if (event.key === Qt.Key_Down) guide.movePick(1)
               else if (event.key === Qt.Key_PageUp) guide.movePick(-6)

@@ -47,11 +47,17 @@ or the Uber TV plugin isn't installed or is turned off.
 | Command | What it does |
 |---|---|
 | `omarchy-shell om-pg help` | these commands |
-| `omarchy-shell om-pg state` | the guide at a glance: open or not, the channel on, how many channels, the theme, what's shown, settings |
+| `omarchy-shell om-pg state` | the guide at a glance: open or not, the channel on, how many channels, the theme, what's shown, settings, and `multiview` (its channels in order, which has the sound, the layout) while it's on |
 | `omarchy-shell om-pg open` | opens the guide (full screen, over everything), on Home when Home is on |
 | `omarchy-shell om-pg display <full\|window\|"">` | how the guide shows: `full` (over everything, the Omarchy bar too) or `window` (an ordinary window, maximized under the bar, on its own desktop); `""` says which |
 | `omarchy-shell om-pg close` | closes it, and turns the TV off |
 | `omarchy-shell om-pg watch <number>` | a channel full screen |
+| `omarchy-shell om-pg multiview "<numbers>"` | Multiview: up to 4 channels at once (`"101,501,801"`), the first with the sound (see Multiview) |
+| `omarchy-shell om-pg multiviewAdd <number>` | adds a channel to Multiview (up to 4) |
+| `omarchy-shell om-pg multiviewRemove <number>` | takes one off; with one left, Multiview closes and that one plays full screen |
+| `omarchy-shell om-pg multiviewLayout <side\|featured\|grid\|row>` | Multiview's layout, one for how many channels it has |
+| `omarchy-shell om-pg multiviewSound <number>` | which of Multiview's channels has the sound |
+| `omarchy-shell om-pg multiviewClose` | closes Multiview: the channel with the sound plays full screen |
 | `omarchy-shell om-pg home` | Home: its sections in order (on or off), its tiles, its background, and the rows that can be added |
 | `omarchy-shell om-pg setHome '<json>'` | changes Home: `{"sections": [...], "tiles": [...], "background": {...}, "on": true}`, any part left out stays (see Home) |
 | `omarchy-shell om-pg rail` | the nav rail: when it shows (`always`, `focus`, `none`) and its items in order, each on or off, and whether each one's part is turned on |
@@ -88,6 +94,7 @@ or the Uber TV plugin isn't installed or is turned off.
 | `omarchy-shell om-pg images` | every picture area, and the picture in it: `[{area, name, picture, fit, opacity, from}]` (`from`: `yours`, `theme`, or `""` for none) |
 | `omarchy-shell om-pg setImage <area> <picture> <fit> <opacity>` | an area's picture: a picture's full path, `none`, `theme` (back to the theme's) or `""` (keep it); fit and opacity as below (`""` keeps either) |
 | `omarchy-shell om-pg background <none\|wallpaper\|/path/picture.jpg> <dim>` | the picture behind the guide: none, the user's Omarchy wallpaper, or a picture's full path; dim `0` to `0.95` darkens it (`""` keeps either) |
+| `omarchy-shell om-pg multiviewBackground <none\|#rrggbb\|theme\|wallpaper\|/path/picture.jpg> <dim>` | what's behind Multiview's tiles: `none` as it is (the theme's colors), a color (`#rrggbb`), `theme` the theme's background, the Omarchy wallpaper, or a picture's full path (checked and copied first); dim `0` to `0.95` darkens a picture (`""` keeps either). The user picks the same four in Multiview's gear; how dark a picture is, and the tiles' look (the Multiview parts below), are yours to set when asked |
 | `omarchy-shell om-pg lowerThird <on\|off> <seconds>` | the channel banner in full screen, and how long it stays (1 to 15) |
 | `omarchy-shell om-pg card <on\|off> <seconds>` | the card shown when changing channel, and how long it stays once the picture is on (0.6 to 5) |
 | `omarchy-shell om-pg channels "<words>"` | channels whose name, category or number has all the words (`""`: the first 100): `{total, channels: [{number, name, kind, category, live, shown}], more}` |
@@ -292,6 +299,11 @@ is `setStyle fonts '{"body": "Adwaita Sans"}'`.
 what's selected, blurred; `guide` the guide's background picture; `none` the
 theme's colors only.
 
+**Multiview's background** comes the same way: `"multiview": {"background":
+{"mode": "none"|"color"|"theme"|"wallpaper"|"image", "color": "#rrggbb",
+"image": "/full/path.jpg", "dim": 0.6}}`. `none` is the theme's colors
+(`mvBackground`), `color` the color given, `theme` the theme's own picture.
+
 ## Elements
 
 Every part of the guide is an element. `elements ""` lists them all (with what
@@ -307,6 +319,7 @@ each is, its states, and whether the theme or the user styles it); `elements
 | Board | `flapTile` (`:status`) |
 | Home | `homeTile` (`:current`), `homeCard` (`:current`), `homeCardTitle`, `homeCardSub`, `homeRowTitle`, `heroKicker`, `heroTitle`, `heroMeta`, `statusChip`, `homeShade` |
 | Library | `libraryTab` (`:current`), `rowTitle`, `posterCard` (`:current`), `posterTitle`, `posterSub`, `liveBadge`, `cardBadge` |
+| Multiview | `mvBackground` (follows `background`), `mvTile` (`:current`, the tile with the sound: every tile is framed by a thin border, the current one thicker), `mvStrip` (the band with the channel and what's on), `mvName` (follows `posterTitle`), `mvShow` (follows `posterSub`), `mvSound` (follows `cardBadge`): Multiview's screen, up to four channels at once. "Thicker borders between the tiles" is `setStyle mvTile '{"border": {"width": 0.15}}'` |
 | Apps | `appCard` (`:current`, its `grow`), `appCardTitle`, `appCardSub`, `appRowTitle`, `appBadge`, `appProgress`, `appTopKicker`, `appTopTitle`, `appTopMeta`, `appTopText`, `appDetailTitle`, `appDetailMeta`, `appDetailText`, `appFactLabel`, `appFactValue`, `appChip`, `appButton` (`:focused`), `appShade`: an app's screen. Each follows the guide part it's like (`elements <name>` says which: `appCard` follows `posterCard`, `appButton` follows `menuRow`…), state by state, until styled. Whatever the style, the guide keeps its own focus ring round the selected card, keeps the selected title readable and its text no smaller than its floor, and keeps the strip naming the app on top |
 | Player | `vodBar`, `vodTitle`, `vodInfo`, `vodTime`, `vodProgress` (on demand: the bar over a movie or video) |
 | Rail | `rail` (`:open`), `railItem` (`:current`, `:focused`) |
@@ -442,6 +455,26 @@ id); `library "<words>"` finds a movie's id and `videos "<words>"` one of the
 user's videos; `play <id>` plays it full screen, from where the user stopped (a
 YouTube video is `yt:<its 11-character id>`). The user pauses with Space, seeks
 with ← →, and Esc stops it, remembering where.
+
+## Multiview
+
+Multiview shows up to four channels at once (live, scheduled or IPTV), the
+sound from one. "Put 101, 501 and 801 on" is `multiview "101,501,801"`; the
+first one has the sound and is the big tile in Featured. Look numbers up with
+`channels "<words>"` first. A locked channel is refused (only the user unlocks
+it, at the screen), and so is one with nothing to show yet.
+
+| Channels | Layouts (the first is what it opens with) |
+|---|---|
+| 2 | `side` (side by side), `featured` |
+| 3 | `featured` (the first big, two beside it), `grid`, `row` |
+| 4 | `grid`, `featured` |
+
+`multiviewAdd` makes the layout its new count's first; `multiviewLayout`
+changes it after. One channel alone opens with the Add a channel list, for the
+user to pick the rest. `state`'s `multiview` says what's on (`null` when it's
+off). The user does all of this from a channel's banner (I or Space while
+watching) and Multiview's own keys; its background is `multiviewBackground`.
 
 ## Program listings
 
@@ -938,7 +971,7 @@ everything again.
 - Change only what the user asked for. Ask before removing channels or themes
   (`removeChannels`, `removeTheme`) or listings (`removeListings`), and before `resetColors` or `reset`
   unless the user asked for it. After a reset, say `reset undo` brings it back.
-- `open` and `watch` put the guide over the user's whole screen. Use them when
+- `open`, `watch` and `multiview` put the guide over the user's whole screen. Use them when
   the user wants to look, or briefly to take a snapshot, and say how to close
   it (Esc, or Turn off at the foot of the nav rail). The user opens and closes it with
   Super + Alt + T (unless changed in Settings) or the TV in the top bar.

@@ -128,6 +128,33 @@ assert.ok(L.describe("programCell", {}, {}).states.includes("selected"))
   assert.deepEqual(apps, ["appCard", "appCardTitle", "appCardSub", "appRowTitle", "appBadge", "appProgress", "appTopKicker", "appTopTitle", "appTopMeta",
                           "appTopText", "appDetailTitle", "appDetailMeta", "appDetailText", "appFactLabel", "appFactValue", "appChip", "appButton", "appShade",
                           "appTableHead", "appTable", "appTicker", "appChart", "appOrigin", "appPageTitle", "appPageHeading", "appPageText"])
+  // Multiview: every tile framed thinly in the cell border, the one with the
+  // sound in the accent, thicker; its labels and badge follow the library's
+  const mv = L.ELEMENTS.filter(e => e.section === "MULTIVIEW").map(e => e.key)
+  assert.deepEqual(mv, ["mvBackground", "mvTile", "mvStrip", "mvName", "mvShow", "mvSound"])
+  assert.deepEqual(L.effective({}, {}).mvBackground, L.effective({}, {}).background, "Multiview's background is the guide's until styled")
+  const mvEff = L.effective({}, {})
+  assert.equal(mvEff.mvTile.border.color, "cellBorder")
+  assert.ok(mvEff.mvTile.border.width > 0, "unselected tiles have a border too")
+  assert.equal(mvEff["mvTile:current"].border.color, "accent")
+  assert.ok(mvEff["mvTile:current"].border.width > mvEff.mvTile.border.width, "the sound's is thicker")
+  assert.deepEqual(mvEff.mvName, mvEff.posterTitle)
+  assert.deepEqual(mvEff.mvSound, mvEff.cardBadge)
+  // agents and themes style every Multiview part (setStyle and a theme's
+  // elements both go through checkElements), and the user's own goes on top
+  const mvSet = L.checkElements({ mvBackground: { fill: "#102030" }, mvTile: { border: { width: 0.15, color: "alert" }, radius: 0 },
+                                  "mvTile:current": { border: { color: "#ffffff" } }, mvStrip: { fill: "#c0000000" },
+                                  mvName: { text: { color: "accent" } }, mvShow: { text: { color: "textDim" } }, mvSound: { fill: "alert" } }, slots, families)
+  assert.deepEqual(mvSet.ignored, [])
+  const themed = L.effective(mvSet.elements, {})
+  assert.equal(themed.mvBackground.fill, "#102030")
+  assert.deepEqual([themed.mvTile.border.width, themed.mvTile.border.color, themed.mvTile.radius], [0.15, "alert", 0])
+  assert.equal(themed["mvTile:current"].border.color, "#ffffff")
+  assert.equal(themed.mvStrip.fill, "#c0000000")
+  assert.equal(themed.mvName.text.color, "accent")
+  assert.equal(themed.mvShow.text.color, "textDim")
+  assert.equal(themed.mvSound.fill, "alert")
+  assert.equal(L.effective(mvSet.elements, { mvTile: { border: { width: 0.05 } } }).mvTile.border.width, 0.05, "the user's over the theme's")
   // where an app is from (code apps v2 §6): solid by default, in the box's colors
   assert.deepEqual(L.effective({}, {}).appOrigin, { color: "boxBg", edge: "boxBorder", size: 1.7 })
   // with nothing styled, each looks like its twin (and appCard grows when current)
@@ -256,7 +283,7 @@ assert.equal(L.bgFloored("image", "", "theme"), false)
   for (const [name, params] of [["themeOption", ["section", "field", "otherwise"]], ["putThemeBackground", []], ["applyTheme", ["id"]],
                                 ["choosePick", ["by"]], ["resetStyleRow", []], ["resetStyle", ["to"]], ["undoReset", []],
                                 ["snapshotStyle", []], ["checkedSnapshot", ["snap"]], ["clamp", ["v", "lo", "hi", "otherwise"]],
-                                ["putStyle", ["snap", "takingBack"]], ["replaceHomeBackground", ["b"]], ["whenLookSaved", ["token", "base", "applied", "failed"]],
+                                ["putStyle", ["snap", "takingBack"]], ["replaceHomeBackground", ["b"]], ["replaceMultiviewBackground", ["b"]], ["whenLookSaved", ["token", "base", "applied", "failed"]],
                                 ["takeBackStyle", ["base", "applied"]]])
     real[name] = fn(guideSrc, name, params)
   const loadBackground = new Function("root", "Look", "saved", block(guideSrc, "if (saved.background) {"))
@@ -268,12 +295,12 @@ assert.equal(L.bgFloored("image", "", "theme"), false)
     themes: [{ id: "retro", name: "Retro" }, T], themeId: "retro",
     bgMode: "none", bgImage: "", bgFrom: "", bgDim: 0.6,
     colorOverrides: {}, imageOverrides: {}, elementOverrides: {}, fontOverrides: {}, layoutOverrides: {},
-    homeBackground: { mode: "focus", image: "", dim: 0.6 }, ltShow: true, ltSeconds: 4, cardShow: true, cardSeconds: 1.4,
+    homeBackground: { mode: "focus", image: "", dim: 0.6 }, multiviewBackground: { mode: "none", image: "", color: "", dim: 0.6 }, mvBgModes: ["none", "color", "theme", "wallpaper", "image"], mvPickSeq: 0, ltShow: true, ltSeconds: 4, cardShow: true, cardSeconds: 1.4,
     beforeReset: null, byUser: byUser, colorSlots: [], colorKeys: [], installedFonts: [], homeBgModes: ["focus", "image", "none"], homePickSeq: 0, styleRefused: "", lookSaving: "",
     pickMatches: [], pickCursor: 0, pickApps: false, pickFolders: false, pickImages: true, pickArea: "",
     styleRows: [{ type: "bg" }], styleCursor: 0, saves: 0,
     get currentTheme() { return root.themes.find(t => t.id === root.themeId) || {} },
-    saveSettings() { root.saves++ }, backToStyle() {}, themeColor() { return "" }, isHex: () => true, checkedImage: () => null, homePictureOk: () => false,
+    saveSettings() { root.saves++ }, backToStyle() {}, themeColor() { return "" }, isHex: () => true, solidHex: v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v), checkedImage: () => null, homePictureOk: () => false,
     themeIdFrom: id => id
   }
   for (const name of Object.keys(real)) root[name] = (...args) => real[name](root, L, null, null, null, null, null, null, themesItem, appScreensItem, AL, appPanelItem, ...args)
@@ -492,16 +519,22 @@ assert.equal(L.bgFloored("image", "", "theme"), false)
     root.ltShow = true; root.ltSeconds = 4; root.cardShow = true; root.cardSeconds = 1.4
     root.homeBackground = { mode: "focus", image: "", dim: 0.6 }
   }
-  // checking the look kept for undo twice changes nothing (Home's picture included)
+  // checking the look kept for undo twice changes nothing (Home's picture
+  // and Multiview's background included: it's checked when settings load,
+  // and again when undo uses it)
   {
     const homeCopy = "/home/u/.config/om-pg/app-pictures/" + "d".repeat(32) + ".png"
     const realOk = root.homePictureOk
     root.homePictureOk = p => p === homeCopy
     root.homeBgModes = ["focus", "details", "image", "none"]
-    const once = root.checkedSnapshot({ theme: "t", home: { background: { mode: "image", image: homeCopy, dim: 0.4 } }, background: { mode: "none" } })
+    const once = root.checkedSnapshot({ theme: "t", home: { background: { mode: "image", image: homeCopy, dim: 0.4 } }, background: { mode: "none" },
+                                        multiview: { background: { mode: "color", color: "#1E2A3B", dim: 0.3 } } })
     const twice = root.checkedSnapshot(once)
     assert.deepEqual(twice.homeBackground, { mode: "image", image: homeCopy, dim: 0.4 }, "the checked shape, checked again, is the same")
+    assert.deepEqual(twice.multiviewBackground, { mode: "color", image: "", color: "#1e2a3b", dim: 0.3 }, "Multiview's color, checked again, kept")
     assert.deepEqual(twice, once)
+    assert.equal(root.checkedSnapshot({ multiview: { background: { mode: "color", color: "red" } } }).multiviewBackground.mode, "none", "a color that isn't #rrggbb: as it is")
+    assert.equal(root.checkedSnapshot({ multiview: { background: { mode: "color", color: "#11223344" } } }).multiviewBackground.mode, "none", "see-through isn't a background")
     root.homePictureOk = realOk
   }
   // a theme saved from the look: yours that went into it, and are still as saved, come off once it's on
@@ -621,6 +654,15 @@ assert.equal(L.bgFloored("image", "", "theme"), false)
   const toSave = checkTheme(troot, L, null, null, null, null, null, null, themesItem, appScreensItem, AL, appPanelItem, given, "t", false, "/home/u/.config/om-pg/themes/t", false)
   assert.equal(toSave.theme.background.image, outside, "to be saved: a full path (the helper checks it and copies it in)")
   assert.equal(toSave.theme.apps.background.image, outside)
+  // Multiview's background in a theme: a color is #rrggbb, and the color mode needs one
+  troot.mvBgModes = ["none", "color", "theme", "wallpaper", "image"]
+  troot.solidHex = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v)
+  const mvTheme = mv => checkTheme(troot, L, null, null, null, null, null, null, themesItem, appScreensItem, AL, appPanelItem,
+                                   { name: "T", colors: {}, multiview: { background: mv } }, "t", false, "/home/u/.config/om-pg/themes/t", false)
+  assert.deepEqual(mvTheme({ mode: "color", color: "#ABCDEF", dim: 0.2 }).theme.multiview, { background: { mode: "color", color: "#abcdef", dim: 0.2 } })
+  const mvBad = mvTheme({ mode: "color", color: "blue" })
+  assert.deepEqual(mvBad.theme.multiview, { background: {} }, "no color: no color mode, the user's kept")
+  assert.ok(mvBad.ignored.some(x => x.indexOf("multiview.background.color") >= 0), JSON.stringify(mvBad.ignored))
   assert.match(guideSrc, /root\.checkTheme\(JSON\.parse\(chunks\[i\]\.slice\(nl \+ 1\)\), id, builtIn, dir, true\)/, "themesRead checks what it reads as from disk")
   assert.match(guideSrc, /root\.checkTheme\(res\.theme, id, false, root\.themesDir \+ "\/" \+ id, true\)/, "and the saved theme the helper gives back")
   // Home shows only the guide's copy of a picture (or a theme's own); a pick

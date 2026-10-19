@@ -89,6 +89,7 @@ node tests/shortcut.test.mjs  # the guide's own shortcut never counts as taken
 node tests/awake.test.mjs     # when the screen is kept awake: off, while a video plays, while Uber TV is on; Omarchy's own screen saver given room
 node tests/saver.test.mjs     # the screen saver: its settings, its pictures, when it may come, what an agent may change
 node tests/channellock.test.mjs   # the channel lock: which channels (by address, then name), blocked or not, typing a passcode
+node tests/multiview.test.mjs     # Multiview and the guide: the media player while it's up, a saved theme keeping its background, the agent commands
 node tests/remotepage.test.mjs    # the phone remote's page: a number on GO or OK, the passcode as dots, sent as text
 python3 tests/apps.test.py    # installing apps: good ones, and ones that try to get past the checks
 python3 tests/appfiles.test.py   # signed app files, updates, withdrawals, transactions and publisher workspaces

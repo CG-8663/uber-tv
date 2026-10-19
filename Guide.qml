@@ -672,6 +672,10 @@ Item {
   // Omarchy wallpaper; image: a picture you pick; focus: the picture of
   // what's selected
   property var homeBackground: ({ mode: "focus", image: "", dim: 0.6 })
+  // Multiview's background: the theme's colors as they are (mvBackground), a
+  // color of your own, the theme's own picture, your Omarchy wallpaper or a
+  // picture you picked, darkened by dim. In settings.json; themes carry one.
+  property var multiviewBackground: ({ mode: "none", image: "", color: "", dim: 0.6 })
   property var recentChannels: []       // urls, the last ones you watched first
   property bool resumeWatch: false      // closed while watching a channel: opening plays it again (settings.json)
   property int homeRow: 0
@@ -864,6 +868,18 @@ Item {
              meta: listed ? root.airTime(show) + (show.desc ? " · " + show.desc : "") : "Live now", progress: listed ? Math.max(0, Math.min(1, (now - show.start) / Math.max(1, show.end - show.start))) : 0 }
   }
 
+  // Multiview's picture: a URL, or "" for the theme's colors
+  readonly property string multiviewBackdrop: {
+    var b = multiviewBackground
+    if (b.mode === "image" && b.image) return fileUrl(b.image)
+    if (b.mode === "wallpaper") return wallpaperUrl
+    if (b.mode === "theme") {
+      var tb = Look.themeBackground(currentTheme, { image: "", from: "" })
+      return tb.mode === "image" && tb.image ? fileUrl(tb.image) : tb.mode === "wallpaper" ? wallpaperUrl : ""
+    }
+    return ""
+  }
+
   // The background: a path or URL, or "" for the theme's colors
   readonly property string homeBackdrop: {
     var mode = homeBackground.mode
@@ -1037,6 +1053,8 @@ Item {
   }
 
   readonly property var homeBgModes: ["focus", "guide", "wallpaper", "image", "none"]
+  readonly property var mvBgModes: ["none", "color", "theme", "wallpaper", "image"]
+  function solidHex(v) { return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) }
   function homeBgLabel(mode) {
     return { focus: "What's selected", guide: "The guide's picture", wallpaper: "Omarchy wallpaper", image: "A picture you pick", none: "None: the theme's colors" }[mode] || mode
   }
@@ -1101,10 +1119,12 @@ Item {
       for (var k in st.apps) note(st.apps[k].background)
     })
     note(root.homeBackground)
+    note(root.multiviewBackground)
     var br = root.beforeReset
     if (br) {
       if (br.appsAll) note(br.appsAll.background)
       note(br.homeBackground)
+      note(br.multiviewBackground)
       if (br.home) note(br.home.background)
     }
     var r = pictureImporter.createObject(root)
@@ -1130,6 +1150,31 @@ Item {
   function replaceHomeBackground(b) {
     root.homePickSeq += 1
     root.homeBackground = b
+  }
+
+  // Multiview's background, as Home's: a change saved; one put in place
+  // whole (a theme, a reset, undo); a picture checked and copied first, and
+  // only the latest pick lands
+  property int mvPickSeq: 0
+  function setMultiviewBackground(changes, landing) {
+    if (!landing && Object.keys(changes).some(function(k) { return k !== "dim" })) root.mvPickSeq += 1
+    var b = { mode: root.multiviewBackground.mode, image: root.multiviewBackground.image, color: root.multiviewBackground.color, dim: root.multiviewBackground.dim }
+    for (var k in changes) b[k] = changes[k]
+    root.multiviewBackground = b
+    root.saveSettings()
+  }
+  function replaceMultiviewBackground(b) {
+    root.mvPickSeq += 1
+    root.multiviewBackground = b
+  }
+  function multiviewPicture(path, done) {
+    root.mvPickSeq += 1
+    var mine = root.mvPickSeq
+    root.importPicture(path, function(res) {
+      if (mine !== root.mvPickSeq) return
+      if (res.ok) root.setMultiviewBackground({ mode: "image", image: res.path }, true)
+      if (done) done(res)
+    })
   }
 
   function cycle(list, now, d) { return list[(Math.max(0, list.indexOf(now)) + (d || 1) + list.length) % list.length] }
@@ -1774,7 +1819,8 @@ Item {
   }
 
   function previewRow() {
-    if (!root.opened || root.watching || root.managing || root.screen !== "guide") return
+    if (!root.opened || root.watching || root.managing || root.screen !== "guide" || multiviewItem.active) return
+    if (root.mvWaitingFor === root.mvRequest) return   // an agent's Multiview on its way
     var ch = root.channels[root.row]
     if (!root.airs(ch)) return
     // a locked one shows a lock instead (Enter asks for the passcode)
@@ -1787,6 +1833,7 @@ Item {
   // unlock ran out): one that's blocked now stops, in the guide, full screen
   // or the mini player (a movie isn't a channel)
   function enforceLock() {
+    if (root.multiview) root.multiview.enforceLock()   // a tile on a channel that's locked now stops, sound or not
     if (root.vod) { if (root.vod.videoId && root.videoLockedBy(root.vod.videoId, root.vod.subtitle, root.vod.owners, root.vod.ownersMore)) root.turnOff(); return }
     if (root.reception === "off" || root.tunedRow < 0) return
     if (channelLockItem.blocks(root.channels[root.tunedRow])) root.turnOff()
@@ -1826,6 +1873,7 @@ Item {
   }
 
   function closeNow() {
+    root.mvRequest += 1   // an agent's Multiview still on its way doesn't start
     if (root.appOpening) root.cancelAppOpen()   // put away while one was coming: it's called off
     var wasOpen = root.opened   // (closing runs twice: here, and as the shell hides it)
     root.opened = false
@@ -2175,6 +2223,7 @@ Item {
       fonts: root.fontOverrides,
       layout: root.layoutOverrides,
       home: { enabled: root.homeEnabled, sections: root.homeSections, tiles: root.homeTiles, background: root.homeBackground },
+      multiview: { background: root.multiviewBackground },
       rail: root.railSetup,
       videos: { enabled: videos.enabled, folder: videos.folder },
       search: { recent: root.recentSearches },
@@ -2572,6 +2621,7 @@ Item {
   readonly property var nativeSaver: nativeSaverItem
   readonly property var screenSaver: screenSaverItem
   readonly property var channelLock: channelLockItem
+  readonly property var multiview: multiviewItem
   // the computer's password, one prompt at a time (Authorize.qml)
   readonly property bool authBusy: authItem.busy
   function authorize(kind, payload, done, still) { return authItem.authorize(kind, payload, done, still) }
@@ -4178,6 +4228,12 @@ Item {
         root.homePicture(f.path, "image")
         return
       }
+      if (root.pickArea === "multiview") {
+        root.dialog = ""
+        keys.forceActiveFocus()
+        root.multiviewPicture(f.path)
+        return
+      }
       if (root.pickArea === "appScreen") {
         // the panel that asked, as it was: a late copy never lands on another
         var req = appPanelItem.pickReq
@@ -4329,7 +4385,7 @@ Item {
   // An area's name, said in full ("Lower third picture" rather than "Picture")
   function imageAreaName(key) {
     return { masthead: "Logo", infoPanel: "Info panel", header: "Time bar", band: "Category bands", channelCell: "Channel column",
-             cell: "Program cells", lt: "Lower third", card: "Channel card", box: "Boxes", home: "Home's background" }[key] || key
+             cell: "Program cells", lt: "Lower third", card: "Channel card", box: "Boxes", home: "Home's background", multiview: "Multiview's background" }[key] || key
   }
 
   // undefined takes yours off (the theme's shows); { src: "" } is none over the theme's
@@ -4427,6 +4483,12 @@ Item {
       var hbg = theme.home.background
       var himg = hbg.image ? (hbg.image.charAt(0) === "/" ? hbg.image : theme.dir + "/" + hbg.image) : root.homeBackground.image
       root.replaceHomeBackground({ mode: hbg.mode || root.homeBackground.mode, image: himg || "", dim: hbg.dim !== undefined ? hbg.dim : root.homeBackground.dim })
+    }
+    if (theme.multiview && theme.multiview.background) {
+      var mbg = theme.multiview.background
+      var mimg = mbg.image ? (mbg.image.charAt(0) === "/" ? mbg.image : theme.dir + "/" + mbg.image) : root.multiviewBackground.image
+      root.replaceMultiviewBackground({ mode: mbg.mode || root.multiviewBackground.mode, image: mimg || "", color: mbg.color || root.multiviewBackground.color || "",
+                                        dim: mbg.dim !== undefined ? mbg.dim : root.multiviewBackground.dim })
     }
     if (theme.lowerThird) {
       if (theme.lowerThird.show !== undefined) root.ltShow = theme.lowerThird.show
@@ -4536,6 +4598,24 @@ Item {
         theme.home = { background: homeBg }
       } else ignored.push("home.background ({mode, image, dim})")
     }
+    // Multiview's background: none, color, theme, wallpaper or image, a picture as Home's
+    var mvb = given.multiview && typeof given.multiview === "object" ? given.multiview.background : undefined
+    if (mvb !== undefined) {
+      if (mvb && typeof mvb === "object") {
+        var mvBg = {}
+        if (root.mvBgModes.indexOf(mvb.mode) >= 0) mvBg.mode = mvb.mode
+        else if (mvb.mode !== undefined) ignored.push("multiview.background.mode (" + root.mvBgModes.join(", ") + ")")
+        if (picture(mvb.image)) mvBg.image = mvb.image
+        else if (mvb.image !== undefined) ignored.push("multiview.background.image (" + (fromDisk ? "a picture in the theme's folder" : "a full path to a .jpg, .png or .webp") + ")")
+        if (mvBg.mode === "image" && !mvBg.image) { delete mvBg.mode; ignored.push("multiview.background.mode image needs multiview.background.image") }
+        if (root.solidHex(mvb.color)) mvBg.color = mvb.color.toLowerCase()
+        else if (mvb.color !== undefined) ignored.push("multiview.background.color (#rrggbb)")
+        if (mvBg.mode === "color" && !mvBg.color) { delete mvBg.mode; ignored.push("multiview.background.mode color needs multiview.background.color") }
+        if (typeof mvb.dim === "number") mvBg.dim = root.clamp(mvb.dim, 0, 0.95, 0.6)
+        else if (mvb.dim !== undefined) ignored.push("multiview.background.dim (0 to 0.95)")
+        theme.multiview = { background: mvBg }
+      } else ignored.push("multiview.background ({mode, image, color, dim})")
+    }
     // how every app's screen looks (its look, top, details, titles, size
     // and background): the theme's layer under your own choices
     // and background; its picture is a name in the theme's folder, or a full
@@ -4621,6 +4701,12 @@ Item {
       for (var hk in theme.home.background) hb[hk] = theme.home.background[hk]
       if (hb.image) hb.image = full(hb.image)
       onDisk.home = { background: hb }
+    }
+    if (theme.multiview && theme.multiview.background) {
+      var mb = {}
+      for (var mk in theme.multiview.background) mb[mk] = theme.multiview.background[mk]
+      if (mb.image) mb.image = full(mb.image)
+      onDisk.multiview = { background: mb }
     }
     if (theme.lowerThird) onDisk.lowerThird = theme.lowerThird
     if (theme.card) onDisk.card = theme.card
@@ -4729,6 +4815,7 @@ Item {
     return { theme: root.themeId, colors: colors, images: images, elements: JSON.parse(JSON.stringify(root.elementOverrides)),
              fonts: JSON.parse(JSON.stringify(root.fontOverrides)), layout: JSON.parse(JSON.stringify(root.layoutOverrides)),
              home: { background: { mode: root.homeBackground.mode, image: root.homeBackground.image, dim: root.homeBackground.dim } },
+             multiview: { background: { mode: root.multiviewBackground.mode, image: root.multiviewBackground.image, color: root.multiviewBackground.color, dim: root.multiviewBackground.dim } },
              background: { mode: root.bgMode, image: root.bgImage, dim: root.bgDim, from: root.bgFrom },
              lowerThird: { show: root.ltShow, seconds: root.ltSeconds }, card: { show: root.cardShow, seconds: root.cardSeconds },
              appsAll: JSON.parse(JSON.stringify(appScreensItem.now.all || {})) }
@@ -4762,6 +4849,14 @@ Item {
                var mode = root.homeBgModes.indexOf(h.mode) >= 0 && (h.mode !== "image" || img) ? h.mode : "focus"
                return { mode: mode, image: img, dim: root.clamp(Number(h.dim), 0, 0.95, 0.6) }
              })(snap.home),
+             multiviewBackground: (function(m) {
+               m = m && m.background && typeof m.background === "object" ? m.background
+                 : snap.multiviewBackground && typeof snap.multiviewBackground === "object" ? snap.multiviewBackground : {}
+               var img = root.homePictureOk(m.image) ? m.image : ""
+               var color = root.solidHex(m.color) ? m.color.toLowerCase() : ""
+               var mode = root.mvBgModes.indexOf(m.mode) >= 0 && (m.mode !== "image" || img) && (m.mode !== "color" || color) ? m.mode : "none"
+               return { mode: mode, image: img, color: color, dim: root.clamp(Number(m.dim), 0, 0.95, 0.6) }
+             })(snap.multiview),
              background: { mode: bg.mode === "wallpaper" || (bg.mode === "image" && image) ? bg.mode : "none", image: image,
                            dim: root.clamp(Number(bg.dim), 0, 0.95, 0.6), from: Look.bgProvenance(bg.from) },
              lowerThird: { show: lt.show !== false, seconds: root.clamp(Number(lt.seconds), 1, 15, 4) },
@@ -4800,6 +4895,10 @@ Item {
     root.replaceHomeBackground({ mode: themeHome.mode || "focus",
                                  image: themeHome.image ? (themeHome.image.charAt(0) === "/" ? themeHome.image : root.currentTheme.dir + "/" + themeHome.image) : "",
                                  dim: themeHome.dim !== undefined ? themeHome.dim : 0.6 })
+    var themeMv = (root.currentTheme.multiview || {}).background || {}
+    root.replaceMultiviewBackground({ mode: themeMv.mode || "none",
+                                      image: themeMv.image ? (themeMv.image.charAt(0) === "/" ? themeMv.image : root.currentTheme.dir + "/" + themeMv.image) : "",
+                                      color: themeMv.color || "", dim: themeMv.dim !== undefined ? themeMv.dim : 0.6 })
     root.putThemeBackground()
     root.bgDim = root.themeOption("background", "dim", 0.6)
     root.ltShow = root.themeOption("lowerThird", "show", true)
@@ -4856,6 +4955,8 @@ Item {
     var back = { theme: same(now.theme, applied.theme) ? base.theme : now.theme,
                  colors: keyed("colors"), images: keyed("images"), elements: keyed("elements"), fonts: keyed("fonts"), layout: keyed("layout"),
                  homeBackground: { mode: part("homeBackground", "mode"), image: part("homeBackground", "image"), dim: part("homeBackground", "dim") },
+                 multiviewBackground: { mode: part("multiviewBackground", "mode"), image: part("multiviewBackground", "image"),
+                                        color: part("multiviewBackground", "color") || "", dim: part("multiviewBackground", "dim") },
                  background: { mode: part("background", "mode"), dim: part("background", "dim"),
                                // a picture and where it came from go together
                                image: same([now.background.image, now.background.from], [applied.background.image, applied.background.from]) ? base.background.image : now.background.image,
@@ -4863,6 +4964,8 @@ Item {
                  lowerThird: { show: part("lowerThird", "show"), seconds: part("lowerThird", "seconds") },
                  card: { show: part("card", "show"), seconds: part("card", "seconds") } }
     if (back.homeBackground.mode === "image" && !back.homeBackground.image) back.homeBackground.mode = "focus"
+    if (back.multiviewBackground.mode === "image" && !back.multiviewBackground.image) back.multiviewBackground.mode = "none"
+    if (back.multiviewBackground.mode === "color" && !back.multiviewBackground.color) back.multiviewBackground.mode = "none"
     if (back.background.mode === "image" && !back.background.image) back.background.mode = "none"
     root.putStyle(back, true)
   }
@@ -4912,6 +5015,9 @@ Item {
                   layout: Look.merge(root.currentTheme.layout || {}, root.layoutOverrides),
                   home: { background: root.homeBackground.mode === "image" ? { mode: "image", image: root.homeBackground.image, dim: root.homeBackground.dim }
                                                                            : { mode: root.homeBackground.mode, dim: root.homeBackground.dim } },
+                  multiview: { background: root.multiviewBackground.mode === "image" ? { mode: "image", image: root.multiviewBackground.image, dim: root.multiviewBackground.dim }
+                                         : root.multiviewBackground.mode === "color" ? { mode: "color", color: root.multiviewBackground.color, dim: root.multiviewBackground.dim }
+                                                                                     : { mode: root.multiviewBackground.mode, dim: root.multiviewBackground.dim } },
                   lowerThird: { show: root.ltShow, seconds: root.ltSeconds }, card: { show: root.cardShow, seconds: root.cardSeconds } }
     // the look every app's screen has now goes with it: the theme's, yours for all apps over it
     var apps = AppLooks.appsForTheme(root.currentTheme.apps || {}, appScreensItem.now.all)
@@ -4990,6 +5096,10 @@ Item {
     root.layoutOverrides = snap.layout
     if (takingBack) root.homeBackground = snap.homeBackground
     else root.replaceHomeBackground(snap.homeBackground)
+    if (snap.multiviewBackground) {
+      if (takingBack) root.multiviewBackground = snap.multiviewBackground
+      else root.replaceMultiviewBackground(snap.multiviewBackground)
+    }
     root.bgImage = snap.background.image
     root.bgMode = snap.background.mode
     root.bgFrom = Look.bgProvenance(snap.background.from)
@@ -6161,6 +6271,37 @@ Item {
     bannerTimer.restart()
   }
 
+  // I or Space while watching: the banner with what you can do from here
+  // (← → choose, Enter picks, Esc or ↓ hides). It stays while you choose.
+  property bool bannerOptions: false
+  property int bannerAct: 0
+  readonly property var bannerActions: [{ key: "multiview", label: "Multiview", icon: "apps" }, { key: "mini", label: "Mini player", icon: "window" },
+                                        { key: "guide", label: "Guide", icon: "tv" }, { key: "mute", label: root.muted ? "Sound on" : "Mute", icon: "" }]
+  function openBannerOptions() {
+    root.bannerAct = 0
+    root.bannerOptions = true
+    root.bannerShown = true
+    bannerTimer.restart()
+  }
+  function hideBanner() {
+    root.bannerOptions = false
+    root.bannerShown = false
+    bannerTimer.stop()
+  }
+  function moveBannerAct(d) {
+    root.bannerAct = Math.max(0, Math.min(root.bannerActions.length - 1, root.bannerAct + d))
+    bannerTimer.restart()
+  }
+  function pickBannerAct(i) {
+    var a = root.bannerActions[i === undefined ? root.bannerAct : i]
+    if (!a) return
+    if (a.key === "mute") { root.muted = !root.muted; bannerTimer.restart(); return }
+    root.hideBanner()
+    if (a.key === "multiview") root.openMultiview()
+    else if (a.key === "mini") root.goPip()
+    else if (a.key === "guide") root.showGuide()
+  }
+
   // The TV
 
   // Also reachable from outside: omarchy-shell shell call marcho78.om-pg tune <row>
@@ -6169,6 +6310,10 @@ Item {
     // a locked channel plays only once it's unlocked (ChannelLock.qml): your
     // actions ask for the passcode before they come here
     if (channelLockItem.blocks(root.channels[r])) return "locked"
+    // one channel on the TV instead of Multiview: its tiles stop first, and
+    // an agent's Multiview still on its way doesn't start
+    root.mvRequest += 1
+    if (root.multiview && root.multiview.active) root.multiview.teardown()
     // an app's playback ends first, finalized, then the TV
     if (root.appPlaying) {
       appPlaybackItem.dropPending()   // asked for after it: the TV wins over an app play queued before
@@ -6231,6 +6376,33 @@ Item {
     if (!root.streamBase) streamer.running = true
   }
 
+  // An agent's Multiview (Commands.qml multiview): a request, numbered when
+  // it's asked for; turning the TV off, closing, or a channel or video
+  // played since overtakes it. An app's playback ends first, finalized, as
+  // for the TV; then, if it's still the latest and the guide is open, the
+  // tiles. While one is on its way the preview box waits (its tune would
+  // overtake it: it's not a choice of yours).
+  property int mvRequest: 0
+  property int mvWaitingFor: -1        // the request on its way, if it's still the latest
+  onAppPlayingChanged: if (appPlaying) mvRequest += 1   // an app's video, chosen since, overtakes it too
+  function requestMultiview() { root.mvRequest += 1; root.mvWaitingFor = root.mvRequest; return root.mvRequest }
+  function startMultiview(urls, request) {
+    if (request !== root.mvRequest || !root.opened) { if (root.mvWaitingFor === request) root.mvWaitingFor = -1; return "overtaken" }
+    if (root.appPlaying) {
+      appPlaybackItem.dropPending()   // asked for after it: Multiview wins over an app play queued before
+      appPlaybackItem.close("replaced", function() { root.startMultiview(urls, request) })
+      return "ok"
+    }
+    root.mvWaitingFor = -1
+    return multiviewItem.startWith(urls)
+  }
+
+  // Multiview from the channel that's on (the banner's Multiview)
+  function openMultiview() {
+    if (root.reception === "off" || root.tunedRow < 0 || root.vod || !root.channels[root.tunedRow]) return "nothing on"
+    return multiviewItem.start(root.channels[root.tunedRow].url)
+  }
+
   function streamUrl() {
     if (root.onAir && root.onAir.vod) return root.onAir.stream || (root.streamBase && root.onAir.id ? root.streamBase + "/play/" + root.onAir.id + ".m3u8" : "")
     if (root.onAir && root.onAir.iptv) return root.onAir.stream
@@ -6263,6 +6435,8 @@ Item {
   }
 
   function turnOff() {
+    root.mvRequest += 1        // an agent's Multiview still on its way doesn't start
+    multiviewItem.teardown()   // every tile stops too, and nothing restarts one
     if (root.vod) root.leaveVod()
     player.stop()
     player.source = ""
@@ -6287,6 +6461,8 @@ Item {
       channelLockItem.askUnlock(lockedBy, function() { root.playVod(entry, from) })
       return "the passcode first"
     }
+    root.mvRequest += 1   // an agent's Multiview still on its way doesn't start
+    if (root.multiview && root.multiview.active) root.multiview.teardown()   // something on demand instead of Multiview
     if (root.appPlaying) {
       appPlaybackItem.dropPending()
       appPlaybackItem.close("replaced", function() { root.playVod(entry, from) })
@@ -6800,6 +6976,8 @@ Item {
     // (while one's opening, BACK stops waiting)
     if (root.appOpening) { if (cmd === "back") root.cancelAppOpen(); return }
     if (root.appUp && !root.opened && (cmd === "back" || cmd === "guide")) { root.summonBack(); return }
+    // Multiview up: its tiles take the buttons (power stops them all)
+    if (root.multiview && root.multiview.active && root.multiview.remote(cmd, number)) return
     if (cmd === "power") {
       if (!on) root.remotePowerOn(-1)
       else if (root.pip) root.closePip()
@@ -6894,9 +7072,17 @@ Item {
       else if (cmd === "down") root.pipSurf(-1)
       else if (cmd === "ok") root.expandPip()
       else if (cmd === "back") root.guidePip()
+    } else if (root.watching && root.bannerOptions) {
+      // the banner's choices: ◀ ▶ choose, OK picks, ▼ or BACK closes them
+      if (cmd === "left") root.moveBannerAct(-1)
+      else if (cmd === "right") root.moveBannerAct(1)
+      else if (cmd === "ok") root.pickBannerAct()
+      else if (cmd === "down" || cmd === "back") root.hideBanner()
     } else if (root.watching) {
-      if (cmd === "up") root.surf(1)
-      else if (cmd === "down") root.surf(-1)
+      // ▲ opens the banner's choices (the keys' I or Space); ◀ ▶ change channel
+      if (cmd === "up") root.openBannerOptions()
+      else if (cmd === "left") root.surf(-1)
+      else if (cmd === "right") root.surf(1)
       else if (cmd === "ok") root.showBanner()
       else if (cmd === "back") root.showGuide()
     } else if (root.opened && root.dialog === "remote") {
@@ -7021,6 +7207,24 @@ Item {
   // What's on, for the helper to show as the media player's track.
   function sendMpris() {
     if (!streamer.running || !root.port) return
+    // Multiview has the playback: the tile with the sound, playing or paused,
+    // so media keys and the bar's widget still find Uber TV
+    if (root.multiview && root.multiview.active) {
+      var mt = root.multiview.tileIn(root.multiview.sel)
+      var mr = root.multiview.rowOf(root.multiview.sel), mch = root.channels[mr]
+      streamer.write(JSON.stringify({ mpris: {
+        active: true,
+        status: root.multiview.paused ? "Paused" : "Playing",
+        id: mt.onAir ? mt.onAir.id || "" : "",
+        title: mt.onAir ? mt.onAir.title : "",
+        artist: mch ? "Multiview · CH " + root.numbers[mr] + " · " + mch.name : "Multiview",
+        album: mch && mch.category ? mch.category : "",
+        length: 0, position: 0,
+        channelId: mch ? mch.channelId || "" : "",
+        canSeek: false
+      } }) + "\n")
+      return
+    }
     var ch = root.channels[root.tunedRow]
     var on = root.reception !== "off" && !!root.onAir
     var paused = player.playbackState === MediaPlayer.PausedState
@@ -7040,6 +7244,7 @@ Item {
   }
 
   function mprisCommand(cmd, message) {
+    if (multiviewItem.active) { multiviewItem.media(cmd); return }   // the tiles, not the TV's stopped player
     if (root.reception === "off") return
     if (root.vod && cmd === "seek") { root.seekVod(Number(message && message.by) / 1e6 || 0); return }
     if (root.vod && cmd === "setPosition") { root.seekVodTo(Number(message && message.to) / 1e6 || 0); return }
@@ -7066,6 +7271,13 @@ Item {
   }
 
   onOnAirChanged: { Qt.callLater(root.sendMpris); remoteStateTimer.restart() }
+  Connections {
+    target: multiviewItem
+    function onActiveChanged() { Qt.callLater(root.sendMpris) }
+    function onSelChanged() { Qt.callLater(root.sendMpris) }
+    function onSlotsChanged() { Qt.callLater(root.sendMpris) }
+    function onPausedChanged() { Qt.callLater(root.sendMpris) }
+  }
   onReceptionChanged: { Qt.callLater(root.sendMpris); remoteStateTimer.restart() }
   onTunedRowChanged: { Qt.callLater(root.sendMpris); remoteStateTimer.restart() }
 
@@ -7335,8 +7547,8 @@ Item {
 
   Timer {
     id: bannerTimer
-    interval: root.ltSeconds * 1000
-    onTriggered: root.bannerShown = false
+    interval: root.bannerOptions ? 10000 : root.ltSeconds * 1000   // choosing: ten seconds from the last key
+    onTriggered: { root.bannerShown = false; root.bannerOptions = false }
   }
 
   // yt-dlp, by its path ("--": a URL can never be read as an option, some
@@ -7599,6 +7811,13 @@ Item {
           if (root.homeBackground.mode === "image" && !root.homeBackground.image) root.homeBackground = { mode: "focus", image: "", dim: root.homeBackground.dim }
           if (legacy) Qt.callLater(function() { root.homePicture(legacy, hmode === "image" ? "image" : "") })
         }
+        if (saved.multiview && saved.multiview.background && typeof saved.multiview.background === "object") {
+          var mvsb = saved.multiview.background
+          var mvsimg = root.homePictureOk(mvsb.image) ? mvsb.image : ""
+          var mvscolor = root.solidHex(mvsb.color) ? mvsb.color.toLowerCase() : ""
+          root.multiviewBackground = { mode: root.mvBgModes.indexOf(mvsb.mode) >= 0 && (mvsb.mode !== "image" || mvsimg) && (mvsb.mode !== "color" || mvscolor) ? mvsb.mode : "none",
+                                       image: mvsimg, color: mvscolor, dim: root.clamp(Number(mvsb.dim), 0, 0.95, 0.6) }
+        }
         root.resumeWatch = saved.resumeWatch === true
         if (Array.isArray(saved.recent)) root.recentChannels = saved.recent.filter(function(u) { return typeof u === "string" }).slice(0, 12)
         root.railSetup = root.checkedRailSetup(saved.rail)
@@ -7778,6 +7997,7 @@ Item {
     mode: root.awake
     opened: root.opened
     playing: AwakeRules.videoPlays({ playing: player.playbackState === MediaPlayer.PlayingState, stalled: player.mediaStatus === MediaPlayer.StalledMedia, reception: root.reception })
+             || multiviewItem.playing   // a Multiview tile on screen, really playing
              || (!!appPlaybackItem.player && !!appPlaybackItem.session && appPlaybackItem.session.state === "playing"
                  && AwakeRules.videoPlays({ playing: appPlaybackItem.player.playbackState === MediaPlayer.PlayingState,
                                             stalled: appPlaybackItem.player.mediaStatus === MediaPlayer.StalledMedia, reception: "on" }))
@@ -8252,6 +8472,13 @@ Item {
         sourceComponent: Component {
           AppPlayer { guide: root }
         }
+      }
+
+      // Multiview: two to four channels at once, over everything but the boxes
+      Multiview {
+        id: multiviewItem
+        anchors.fill: parent
+        guide: root
       }
 
       DialogBox {

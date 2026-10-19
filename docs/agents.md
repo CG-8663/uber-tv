@@ -17,6 +17,7 @@ ask in your own words, for example:
 - "Use ~/Pictures/banner.png for the lower third and my logo instead of the title"
 - "Make Jellyfin look like Netflix", "posters for my movies, hide Recently added"
 - "Load the demo channels"
+- "Put 101, 501 and 801 on Multiview, featured, sound from 501"
 
 The agent does it through the guide's own commands, so nothing is edited
 behind its back. It can make themes of any style and add them to the style
@@ -47,7 +48,11 @@ or in a window (`display`), turn My Videos on or off or
 point it at another folder (`videos`, `setVideos`), add program listings
 (`listings`, `addListings`, `removeListings`), and play from the library
 or your videos (`library`, `videos`, `play`), and search everything
-(`search`).
+(`search`), and run Multiview: `multiview "101,501,801"` opens it with up
+to four channels (never a locked one), then `multiviewAdd`,
+`multiviewRemove`, `multiviewLayout`, `multiviewSound` and `multiviewClose`;
+`state` says what's on it, and `multiviewBackground` sets what's behind the
+tiles.
 
 **Turning it on.** The skill that teaches agents those commands
 (`skills/program-guide/SKILL.md`) is off until you turn it on in Settings
@@ -91,6 +96,8 @@ omarchy-shell om-pg theme retro
 omarchy-shell om-pg reset original                # back to how the guide came
 omarchy-shell om-pg reset undo                    # changed your mind
 omarchy-shell om-pg watch 101
+omarchy-shell om-pg multiview "101,501,801"       # Multiview, the first with the sound
+omarchy-shell om-pg multiviewLayout grid
 ```
 
 **Claude Code** asks before running each command unless you allow them, in

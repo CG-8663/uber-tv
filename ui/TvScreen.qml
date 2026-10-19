@@ -53,7 +53,7 @@ Rectangle {
   // The channel banner (the lower third)
   LowerThird {
     z: 2
-    visible: guide.bannerShown && guide.vod === null
+    visible: (guide.bannerShown || guide.bannerOptions) && guide.vod === null
     anchors.fill: parent
     look: guide.look
     image: guide.areaImages.lt
@@ -65,5 +65,21 @@ Rectangle {
     progress: guide.onAir && (!guide.onAir.live || guide.onAir.epg) ? Math.max(0, (guide.now - guide.onAir.start) / (guide.onAir.end - guide.onAir.start)) : -1
     clock: guide.clock(guide.now)
     times: !guide.onAir ? "" : guide.onAir.live && !guide.onAir.epg ? "● LIVE" : guide.clock(guide.onAir.start) + " – " + guide.clock(guide.onAir.end)
+    options: guide.bannerOptions ? guide.bannerActions : []
+    optionFocus: guide.bannerAct
+    onOptionPicked: function(i) { guide.bannerAct = i; guide.pickBannerAct(i) }
+  }
+
+  // Choosing on the banner: its keys, top left
+  KeyHints {
+    z: 2
+    visible: guide.bannerOptions && guide.bannerShown && guide.vod === null
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.margins: guide.u * 1.5
+    size: guide.u * 1.55
+    capStyle: guide.look.keycap
+    labelStyle: guide.look.keyLabel
+    model: [{ keys: ["←", "→"], label: "Choose" }, { keys: ["ENTER"], label: "Pick" }, { keys: ["ESC"], label: "Hide" }]
   }
 }

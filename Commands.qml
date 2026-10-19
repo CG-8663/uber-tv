@@ -44,6 +44,51 @@ Scope {
     return out
   }
 
+  // Multiview's channels from numbers: 1 to 4, each one that can play now
+  // (as watch checks); the first problem, or their rows
+  function multiviewRows(numbers) {
+    var parts = String(numbers).split(/[,\s]+/).filter(function(x) { return x })
+    if (!parts.length) return { error: "give 1 to 4 channel numbers, with commas: multiview \"101,501\" (channels <words> finds them)" }
+    if (parts.length > 4) return { error: "Multiview holds up to 4 channels" }
+    var rows = []
+    for (var i = 0; i < parts.length; i++) {
+      var r = /^\d+$/.test(parts[i]) ? guide.numbers.indexOf(Number(parts[i])) : -1
+      if (r < 0) return { error: "no channel " + parts[i] + " (channels <words> finds its number)" }
+      if (rows.indexOf(r) >= 0) return { error: "channel " + parts[i] + " is given twice" }
+      if (!guide.airs(guide.channels[r])) return { error: "channel " + parts[i] + " has nothing to show yet" }
+      if (guide.channelLock && guide.channelLock.blocks(guide.channels[r]))
+        return { error: !guide.channelLock.loaded ? "the channel lock hasn't been read (" + (guide.channelLock.failed || "it's being read") + "): no channel plays until it is"
+                                                  : "channel " + parts[i] + " is locked: only the user can unlock it, with the passcode, at the screen" }
+      rows.push(r)
+    }
+    return { rows: rows }
+  }
+
+  // Multiview for state: its channels in order (which has the sound), the
+  // layout and the ones it can take; null while it's off
+  function multiviewInfo() {
+    var mv = guide.multiview
+    if (!mv || !mv.active) return null
+    var sound = mv.rowOf(mv.sel)
+    return { channels: mv.order.map(function(s) {
+               var r = mv.rowOf(s)
+               var c = r >= 0 ? commands.channelInfo(r) : { number: null, name: "" }
+               c.sound = s === mv.sel
+               return c
+             }),
+             layout: mv.layout, layouts: mv.layoutsFor(mv.count), sound: sound >= 0 ? guide.numbers[sound] : null,
+             fullScreen: mv.mode === "full", adding: mv.mode === "picker", paused: mv.paused }
+  }
+
+  // The tile showing a channel number, or -1
+  function multiviewSlot(number) {
+    var mv = guide.multiview, n = Number(String(number).trim())
+    for (var k = 0; k < mv.order.length; k++) if (guide.numbers[mv.rowOf(mv.order[k])] === n) return mv.order[k]
+    return -1
+  }
+
+  readonly property string multiviewOff: "Multiview isn't on (multiview \"<numbers>\" opens it)"
+
   function channelInfo(r) {
     var c = guide.channels[r]
     return { number: guide.numbers[r], name: c.name, kind: c.kind || "youtube", category: c.category || "", live: !!c.live,
@@ -115,11 +160,17 @@ Scope {
 
   readonly property var commandHelp: [
     ["help", "these commands"],
-    ["state", "the guide at a glance: open, channels, theme, filters, settings"],
+    ["state", "the guide at a glance: open, channels, theme, filters, settings, and Multiview (its channels in order, layout and sound) while it's on"],
     ["open", "opens the guide"],
     ["display <full|window|\"\">", "how the guide shows: full (over everything, the Omarchy bar too) or window (an ordinary maximized window, the bar showing, on its own desktop); \"\" just says which"],
     ["close", "closes the guide (and turns the TV off)"],
     ["watch <number>", "a channel full screen (not a locked one: only the user unlocks those, with the passcode)"],
+    ["multiview <numbers>", "Multiview: up to 4 channels at once, with commas (multiview \"101,501,801\"), the first with the sound; one alone opens with the Add a channel list for the user. Not locked channels. It takes over the screen: only when the user asks"],
+    ["multiviewAdd <number>", "adds a channel to Multiview (up to 4); the layout becomes its count's first"],
+    ["multiviewRemove <number>", "takes a channel off Multiview; with one left, Multiview closes and that one plays full screen"],
+    ["multiviewLayout <side|featured|grid|row>", "Multiview's layout: two channels side or featured; three featured, grid or row; four grid or featured (featured: the first channel big)"],
+    ["multiviewSound <number>", "which of Multiview's channels has the sound"],
+    ["multiviewClose", "closes Multiview: the channel with the sound plays full screen"],
     ["themes", "the themes: [{id, name, description, builtIn, current, pictures, elements, fonts, layout}]"],
     ["theme <id>", "puts a theme on"],
     ["addTheme <json>", "saves a theme (its JSON itself, not a path) in ~/.config/om-pg/themes and puts it on; an id or name already there is replaced"],
@@ -137,6 +188,7 @@ Scope {
     ["images", "every picture area: [{area, name, picture, fit, opacity, from}] (from: yours, theme, or \"\" for none)"],
     ["setImage <area> <picture> <fit> <opacity>", "an area's picture: a picture's full path, none, theme (back to the theme's) or \"\" (keep it); fit fill|fit|stretch|tile|center|frame; opacity 0.1 to 1 (\"\" keeps either)"],
     ["background <none|wallpaper|/path/to/picture> <dim>", "the picture behind the guide; dim 0 to 0.95 (\"\" keeps it)"],
+    ["multiviewBackground <none|#rrggbb|theme|wallpaper|/path/to/picture> <dim>", "Multiview's background: as it is (the theme's colors), a color, the theme's background, the Omarchy wallpaper or a picture; dim 0 to 0.95 darkens a picture (\"\" keeps either)"],
     ["lowerThird <on|off|\"\"> <seconds|\"\">", "the channel banner in full screen (1 to 15 s)"],
     ["card <on|off|\"\"> <seconds|\"\">", "the card shown when changing channel (0.6 to 5 s)"],
     ["home", "Home: on or not, its sections in order (with on/off), its tiles, its background, and the rows that can be added"],
@@ -195,6 +247,7 @@ Scope {
                             adding: guide.jobTotal > 0 || /…$/.test(guide.addStatus),
                             saving: guide.appScreens ? guide.appScreens.saving : null,
                             snapshot: guide.snapshots ? guide.snapshots.report : null,
+                            multiview: commands.multiviewInfo(),
                             settingsProblem: guide.settingsProblem || undefined })
     }
 
@@ -226,6 +279,67 @@ Scope {
       commands.pendingWatch = r
       watchSoon.restart()
       return commands.okReply({ channel: commands.channelInfo(r) })
+    }
+
+    function multiview(numbers: string): string {
+      var got = commands.multiviewRows(numbers)
+      if (got.error) return commands.failReply(got.error)
+      if (!guide.opened || guide.pip) guide.guidePip()
+      // a moment later (the guide opening), unless something's overtaken it (Guide.startMultiview)
+      commands.pendingMultiview = { urls: got.rows.map(function(r) { return guide.channels[r].url }), request: guide.requestMultiview(), tries: 0 }
+      multiviewSoon.restart()
+      return commands.okReply({ channels: got.rows.map(commands.channelInfo), layout: guide.multiview.layoutsFor(got.rows.length)[0],
+                                note: got.rows.length === 1 ? "one channel: Multiview opens with the Add a channel list, for the user to add more" : undefined })
+    }
+
+    function multiviewAdd(number: string): string {
+      var mv = guide.multiview
+      if (!mv.active) return commands.failReply(commands.multiviewOff)
+      if (mv.count >= 4) return commands.failReply("Multiview holds four channels: take one off first (multiviewRemove <number>)")
+      var got = commands.multiviewRows(number)
+      if (got.error) return commands.failReply(got.error)
+      if (got.rows.length !== 1) return commands.failReply("one channel number")
+      if (mv.addTile(guide.channels[got.rows[0]].url) < 0) return commands.failReply("channel " + String(number).trim() + " is on Multiview already")
+      if (mv.mode === "picker" && mv.pickMode === "add" && mv.count >= 4) mv.mode = "tiles"
+      return commands.okReply({ multiview: commands.multiviewInfo() })
+    }
+
+    function multiviewRemove(number: string): string {
+      var mv = guide.multiview
+      if (!mv.active) return commands.failReply(commands.multiviewOff)
+      var slot = commands.multiviewSlot(number)
+      if (slot < 0) return commands.failReply("channel " + String(number).trim() + " isn't on Multiview")
+      var closes = mv.count <= 2
+      var left = mv.order.filter(function(x) { return x !== slot })[0]
+      var leftNumber = left !== undefined && mv.rowOf(left) >= 0 ? guide.numbers[mv.rowOf(left)] : null
+      mv.remove(slot)
+      return commands.okReply({ multiview: commands.multiviewInfo(),
+                                note: closes ? "Multiview closed" + (leftNumber !== null ? ": channel " + leftNumber + " plays full screen" : "") : undefined })
+    }
+
+    function multiviewLayout(layout: string): string {
+      var mv = guide.multiview
+      if (!mv.active) return commands.failReply(commands.multiviewOff)
+      if (!mv.setLayout(String(layout).trim()))
+        return commands.failReply("with " + mv.count + " channel" + (mv.count === 1 ? "" : "s") + ": " + mv.layoutsFor(mv.count).join(", "))
+      return commands.okReply({ multiview: commands.multiviewInfo() })
+    }
+
+    function multiviewSound(number: string): string {
+      var mv = guide.multiview
+      if (!mv.active) return commands.failReply(commands.multiviewOff)
+      var slot = commands.multiviewSlot(number)
+      if (slot < 0) return commands.failReply("channel " + String(number).trim() + " isn't on Multiview")
+      mv.select(slot)
+      return commands.okReply({ multiview: commands.multiviewInfo() })
+    }
+
+    function multiviewClose(): string {
+      var mv = guide.multiview
+      if (!mv.active) return commands.failReply(commands.multiviewOff)
+      var sound = mv.rowOf(mv.sel)
+      mv.exit()
+      return commands.okReply({ note: "Multiview closed" + (sound >= 0 ? ": channel " + guide.numbers[sound] + " plays full screen" : "") })
     }
 
     function themes(): string {
@@ -385,6 +499,25 @@ Scope {
       }
       guide.saveSettings()
       return commands.okReply({ background: commands.styleState().background })
+    }
+
+    function multiviewBackground(mode: string, dim: string): string {
+      var m = String(mode).trim()
+      var changes = {}
+      var picture = ""
+      if (m === "none" || m === "theme" || m === "wallpaper") changes.mode = m
+      else if (guide.solidHex(m)) { changes.mode = "color"; changes.color = m.toLowerCase() }
+      else if (/^(~\/|\/).+\.(jpe?g|png|webp)$/i.test(m)) picture = m.replace(/^~(?=\/)/, Quickshell.env("HOME"))
+      else if (m) return commands.failReply("none, a color (#rrggbb), theme, wallpaper, or a picture's full path (.jpg, .png or .webp)")
+      var d = String(dim).trim()
+      if (d) {
+        if (isNaN(Number(d)) || Number(d) < 0 || Number(d) > 0.95) return commands.failReply("dim is 0 (none) to 0.95")
+        changes.dim = Math.round(Number(d) * 100) / 100
+      }
+      if (Object.keys(changes).length) guide.setMultiviewBackground(changes)
+      // a picture is checked and copied by the helper first, and shown once it's in
+      if (picture) guide.multiviewPicture(picture)
+      return commands.okReply({ background: guide.multiviewBackground, note: picture ? "the picture is checked and copied first: Multiview shows it once it's in" : undefined })
     }
 
     function lowerThird(show: string, seconds: string): string {
@@ -904,6 +1037,18 @@ Scope {
 
   // watch, from the command: once the mini player (or the guide) is up
   property int pendingWatch: -1
+  property var pendingMultiview: null
+  Timer {
+    id: multiviewSoon
+    interval: 600
+    onTriggered: {
+      var p = commands.pendingMultiview
+      if (!p) return
+      if (!guide.opened && p.tries < 8 && p.request === guide.mvRequest) { p.tries += 1; multiviewSoon.restart(); return }   // still opening
+      commands.pendingMultiview = null
+      guide.startMultiview(p.urls, p.request)
+    }
+  }
   Timer {
     id: watchSoon
     interval: 600

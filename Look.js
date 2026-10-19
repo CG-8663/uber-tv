@@ -329,7 +329,21 @@ var ELEMENTS = [
   { key: "appPageHeading", section: "APPS", label: "Page: heading", follows: "rowTitle", about: "a heading in an article page on an app's screen",
     text: true, style: {} },
   { key: "appPageText", section: "APPS", label: "Page: text", follows: "boxText", about: "an article page's text on an app's screen",
-    text: true, style: {} }
+    text: true, style: {} },
+  // Multiview (two to four channels at once)
+  { key: "mvBackground", section: "MULTIVIEW", label: "Background", follows: "background", about: "behind Multiview's tiles (a picture, if you set one for Multiview, goes over it)",
+    box: ["fill"], style: {} },
+  { key: "mvTile", section: "MULTIVIEW", label: "Tile", about: "each channel's frame in Multiview, round its picture; current is the one with the sound",
+    box: BOX, states: ["current"], style: { fill: "preview", border: { width: 0.08, color: "cellBorder" }, radius: 0.35 },
+    stateStyle: { current: { border: { width: 0.2, color: "accent" } } } },
+  { key: "mvStrip", section: "MULTIVIEW", label: "Name strip", about: "the band along a tile's bottom with its channel and what's on",
+    box: ["fill", "border", "radius", "padding"], style: { fill: "scrim" } },
+  { key: "mvName", section: "MULTIVIEW", label: "Channel name", follows: "posterTitle", about: "a tile's channel number and name",
+    text: true, style: {} },
+  { key: "mvShow", section: "MULTIVIEW", label: "What's on", follows: "posterSub", about: "what's on a tile's channel",
+    text: true, style: {} },
+  { key: "mvSound", section: "MULTIVIEW", label: "Sound badge", follows: "cardBadge", about: "SOUND on the tile you hear",
+    box: ["fill", "border", "radius", "padding"], text: true, style: {} }
 ]
 
 // How the guide is laid out. Lengths are in units.

@@ -20,6 +20,8 @@ one screen you drive with the keyboard, the mouse or your phone.
 - **Make it yours.** Seven built-in themes, and every color, shape, font and
   layout can be changed. Arrange Home and the nav rail. Full screen or in a
   window.
+- **Multiview.** Up to four channels at once (side by side, featured, grid
+  or row), live or scheduled, the sound from the one you pick.
 - **Mini player** in a corner while you work, and media keys that change
   channel.
 - **Phone remote.** Pair a phone on your network: a d-pad, a number pad and
@@ -155,10 +157,21 @@ Settings → General).
 |---|---|
 | ↑ ↓ | Channel up / down |
 | Enter or G | Back to the guide |
-| I or Space | Channel banner |
+| I or Space | Channel banner, with Multiview, Mini player, Guide and Mute (← → choose, Enter picks) |
 | P | Mini player |
 | M | Mute |
 | Esc | TV off, back |
+
+**Multiview** (from a channel's banner: I or Space, then Multiview)
+
+| Key | Does |
+|---|---|
+| ↑ ↓ ← → | Move the sound to another tile (↑ from the top row: Add channel, Layout, Exit and the background's gear) |
+| Enter | That tile full screen (I or Space there: its options) |
+| PgUp PgDn | The selected tile's channel |
+| Del | Take a tile off |
+| L | Layout |
+| Esc | Exit: the channel with the sound plays full screen |
 
 <details>
 <summary><b>More keys:</b> Home, the library, movies and videos, the mini player, search, apps, managing channels</summary>

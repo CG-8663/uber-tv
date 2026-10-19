@@ -6,7 +6,10 @@ import "../Look.js" as Look
 // It fills the space it's given and places the banner in it by the lower
 // third element (Look.js): its height, its margin from the edges, its width
 // (full, or a share) and which side it keeps to. The lt* elements style
-// what's on it; image is its picture, if any.
+// what's on it; image is its picture, if any. options, when given, are a
+// row of choices just above it (I or Space while watching: Multiview, Mini
+// player, Guide…), drawn as the menu rows are; optionFocus is the one picked
+// by the arrows, and a click picks one (optionPicked).
 Item {
   id: lt
 
@@ -20,6 +23,9 @@ Item {
   property string clock: ""
   property string times: ""
   property var image: null         // a picture over the background ({ url, fit, opacity }), or null
+  property var options: []         // [{ label, icon }], or none
+  property int optionFocus: -1
+  signal optionPicked(int index)
 
   readonly property var s: look.lowerThird || ({})
   readonly property real margin: Look.px(s.margin !== undefined ? s.margin : 2, unit)
@@ -111,6 +117,43 @@ Item {
         text: lt.times
         s: lt.look.ltTime || ({})
         unit: lt.unit
+      }
+    }
+  }
+
+  // The choices, just above the banner
+  Row {
+    visible: lt.options.length > 0
+    x: banner.x
+    y: banner.y - height - lt.unit * 0.8
+    height: lt.unit * 2.8
+    spacing: lt.unit * 0.6
+    Repeater {
+      model: lt.options
+      Box {
+        id: option
+        required property var modelData
+        required property int index
+        readonly property var st: index === lt.optionFocus ? (lt.look["menuRow:focused"] || ({})) : (lt.look.menuRow || ({}))
+        width: optionRow.implicitWidth + lt.unit * 2.2
+        height: lt.unit * 2.8
+        s: st
+        unit: lt.unit * 0.8
+        Row {
+          id: optionRow
+          anchors.centerIn: parent
+          spacing: lt.unit * 0.5
+          Icon {
+            visible: !!option.modelData.icon
+            anchors.verticalCenter: parent.verticalCenter
+            name: option.modelData.icon || ""
+            size: lt.unit * 1.2
+            stroke: 1.8
+            color: option.st.text && option.st.text.color ? option.st.text.color : "white"
+          }
+          Label { anchors.verticalCenter: parent.verticalCenter; text: option.modelData.label; s: option.st; unit: lt.unit * 0.8 }
+        }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: lt.optionPicked(option.index) }
       }
     }
   }
