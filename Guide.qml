@@ -148,7 +148,13 @@ Item {
   readonly property int span: slot * slotsShown
   readonly property int maxSlotOffset: 24
   property int slotOffset: 0
-  readonly property real windowStart: Math.floor(now / slot) * slot + slotOffset * slot
+  readonly property real windowStart: slotStart(now) + slotOffset * slot
+  // The half hour a moment falls in, by the clock here: on the hour and half
+  // past where the time zone is a quarter hour off too (UTC+5:45)
+  function slotStart(t) {
+    var off = -new Date(t * 1000).getTimezoneOffset() * 60
+    return Math.floor((t + off) / root.slot) * root.slot - off
+  }
   readonly property real windowEnd: windowStart + span
 
   property int row: 0
@@ -801,7 +807,7 @@ Item {
     root.libDetail = null
     root.screen = "guide"
     root.row = r
-    var base = Math.floor(root.now / root.slot) * root.slot
+    var base = root.slotStart(root.now)
     root.slotOffset = Math.max(0, Math.min(root.maxSlotOffset, Math.floor((start - base) / root.slot)))
     root.cursorTime = start
     keys.forceActiveFocus()
@@ -2562,14 +2568,16 @@ Item {
 
   // The TV day a moment falls in, named by the date it starts on.
   function tvDay(t) {
-    return Qt.formatDateTime(new Date((t - root.dayStartsAt) * 1000), "yyyy-MM-dd")
+    return Qt.formatDateTime(new Date(root.tvDayStart(t) * 1000), "yyyy-MM-dd")
   }
 
-  // When the TV day holding t began (4 AM)
+  // When the TV day holding t began: 4 AM by the clock, on the day the
+  // clocks change too (not 4 hours after midnight, 3 or 5 AM then)
   function tvDayStart(t) {
-    var d = new Date((t - root.dayStartsAt) * 1000)
-    d.setHours(0, 0, 0, 0)
-    return d.getTime() / 1000 + root.dayStartsAt
+    var d = new Date(t * 1000)
+    d.setHours(root.dayStartsAt / 3600, 0, 0, 0)
+    if (d.getTime() > t * 1000) { d.setDate(d.getDate() - 1); d.setHours(root.dayStartsAt / 3600, 0, 0, 0) }
+    return d.getTime() / 1000
   }
 
   // What the schedule airs: today's plan, or the listing if there's none yet.
