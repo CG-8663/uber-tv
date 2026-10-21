@@ -119,6 +119,9 @@ Item {
   // From the channel that's on: Multiview with it, and the list to add more
   function start(url) {
     if (!url) return "no channel"
+    // the TV's pause and rewind buffer goes first, its writer gone, so a tile
+    // never opens the provider beside it
+    if (guide.pauser.busy) { guide.turnOff(); guide.pauser.whenGone(function() { mv.start(url) }); return "ok" }
     guide.turnOff()
     mv.slots = [url, "", "", ""]
     mv.order = [0]
@@ -139,6 +142,7 @@ Item {
   // opens as from the banner, with the Add a channel list
   function startWith(urls) {
     if (urls.length <= 1) return mv.start(urls[0])
+    if (guide.pauser.busy) { guide.turnOff(); guide.pauser.whenGone(function() { mv.startWith(urls) }); return "ok" }
     guide.turnOff()
     mv.layout = mv.layoutsFor(urls.length)[0]
     mv.slots = [0, 1, 2, 3].map(function(i) { return urls[i] || "" })
@@ -198,6 +202,7 @@ Item {
     var ch = guide.channels[r]
     if (!ch) return
     if (guide.channelLock.blocks(ch)) { guide.channelLock.askUnlock(ch, function() { mv.chooseUrl(ch.url) }); return }
+    if (guide.secondStreamOf(ch)) guide.allowStream(ch)   // picked though marked 2nd stream: yes, for that provider
     mv.chooseUrl(ch.url)
   }
 
@@ -304,11 +309,23 @@ Item {
       var r = v[((p + d * k) % n + n) % n]
       var ch = guide.channels[r]
       if (!ch || others.indexOf(ch.url) >= 0) continue
+      if (mv.askFirst(r)) return
       var s = mv.slots.slice()
       s[mv.sel] = ch.url
       mv.slots = s
       return
     }
+  }
+
+  // A channel a recording's provider would stream twice: not put on the
+  // tile; the Change channel list opens on it instead, marked 2nd stream
+  // (picking it there is saying yes). True if it did.
+  function askFirst(r) {
+    if (!guide.secondStreamOf(guide.channels[r])) return false
+    mv.openPicker("replace")
+    mv.pick = Math.max(0, mv.pickRows.indexOf(r))
+    mv.say("That one takes a 2nd stream from a provider that's recording: Enter puts it on anyway.")
+    return true
   }
 
   // The lock changed (or an unlock ran out): a tile on a channel that's
@@ -501,6 +518,7 @@ Item {
     if (cmd === "tune") {
       var r = guide.numbers.indexOf(Number(number)), ch = guide.channels[r]
       if (!ch || mv.slots.indexOf(ch.url) >= 0) return true
+      if (mv.askFirst(r)) return true
       var s = mv.slots.slice()
       s[mv.sel] = ch.url
       mv.slots = s
@@ -858,7 +876,8 @@ Item {
           oneClick: true
           focused: index === mv.pick
           label: (mv.guide.numbers[modelData] ? mv.guide.numbers[modelData] + "  " : "") + (mv.guide.channels[modelData] ? mv.guide.channels[modelData].name : "")
-          value: mv.guide.channelLock.blocks(mv.guide.channels[modelData]) ? "Locked" : !mv.guide.airs(mv.guide.channels[modelData]) ? "Loading" : ""
+          value: mv.guide.channelLock.blocks(mv.guide.channels[modelData]) ? "Locked" : !mv.guide.airs(mv.guide.channels[modelData]) ? "Loading"
+                 : mv.guide.secondStreamOf(mv.guide.channels[modelData]) ? "2nd stream" : ""
           onActivated: { mv.pick = index; mv.choose(index) }
         }
       }

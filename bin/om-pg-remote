@@ -65,7 +65,8 @@ PAGE = pathlib.Path(__file__).resolve().parent.parent / "remote" / "index.html"
 PORT = next((int(a) for a in sys.argv[1:] if a.isdigit()), 24750)
 CODE_LIFE = 120
 CODE_TRIES = 5
-COMMANDS = {"up", "down", "left", "right", "ok", "back", "chup", "chdown", "guide", "full", "mini", "mute", "power", "tune", "options", "code"}
+COMMANDS = {"up", "down", "left", "right", "ok", "back", "chup", "chdown", "guide", "full", "mini", "mute", "power", "tune", "options", "code",
+            "yes", "no"}
 PRIVATE = [ipaddress.ip_network(n) for n in
            ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16")]
 

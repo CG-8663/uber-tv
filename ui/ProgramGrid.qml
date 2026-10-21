@@ -285,11 +285,24 @@ Item {
               unit: guide.u
               color: s.text.color === "inherit" ? cell.s.text.color : s.text.color
             }
+            // ● Recording, Scheduled or Conflict: what's happening to the show, in words
+            readonly property string rec: guide.recMark(rowItem.channel, modelData)
+            Label {
+              id: recTag
+              visible: cell.rec !== "" && parent.width > guide.u * 3
+              anchors.right: parent.right
+              anchors.rightMargin: cell.padding
+              anchors.verticalCenter: parent.verticalCenter
+              text: cell.rec === "recording" ? (parent.width > guide.u * 10 ? "● Recording" : "●") : cell.rec === "conflict" ? "Conflict" : "Scheduled"
+              s: guide.look.recordDot
+              unit: guide.u
+              color: s.text.color === "inherit" ? cell.s.text.color : s.text.color
+            }
             Label {
               visible: parent.width > guide.u * 3
               anchors.fill: parent
               anchors.leftMargin: cell.padding + (liveTag.visible ? liveTag.implicitWidth + gridArea.liveGap : 0)
-              anchors.rightMargin: cell.padding
+              anchors.rightMargin: cell.padding + (recTag.visible ? recTag.implicitWidth + gridArea.liveGap : 0)
               verticalAlignment: Text.AlignVCenter
               text: cell.modelData.live ? cell.modelData.title
                     : (cell.modelData.start < guide.windowStart ? "◀ " : "") + cell.modelData.title

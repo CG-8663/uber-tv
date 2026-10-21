@@ -33,7 +33,8 @@ and is remembered); **?** lists every key:
 | ← →       | Program (scrolls ahead up to 12 hours) |
 | PgUp PgDn | Previous / next category               |
 | Enter     | Full screen                            |
-| V         | The library: movies, series, videos    |
+| I / Space | A show's choices: Watch, and Record while Recordings are on |
+| V         | The library: movies, series, videos, recordings |
 | /         | Search                                 |
 | W         | In a window, or full screen            |
 | H         | Home                                   |
@@ -59,7 +60,8 @@ Watching full screen:
 |-------------|---------------------------|
 | ↑ ↓         | Channel up, channel down  |
 | Enter / G   | Guide (the TV keeps playing in the preview box) |
-| I / Space   | Channel banner, with its options: [Multiview](#multiview), Mini player, Guide, Mute (← → choose, Enter picks; it hides after 10 seconds) |
+| I / Space   | Channel banner, with its options: [Multiview](#multiview), Record (while Recordings are on), Mini player, Guide, Mute; with pause and rewind on, Pause, Back 30 s, Forward 30 s and Live come first (← → choose, Enter picks; it hides after 10 seconds) |
+| J K L       | [Pause and rewind](#recordings): back 30 s, pause or resume, forward 30 s (off, they offer Turn on) |
 | P           | Mini player               |
 | M           | Mute                      |
 | Esc         | TV off, back to Home or the guide (with Home off: close) |
@@ -103,7 +105,7 @@ library, **T** the phone remote, **Esc** closes.
   how many cards (all, 6, 12, 24), and their order (as they come, newest or
   oldest first, A to Z). *Add a row* adds a movie genre, a My Videos folder, a
   YouTube channel's videos, what's coming up on a channel (its lineup, or its
-  program listings), what's on in a category, or your recent searches. Del
+  program listings), what's on in a category, your recordings, or your recent searches. Del
   takes off a row you added.
 - **Tiles:** which show, and in what order (Shift+↑↓).
 - *Back to how Home came* puts it all back.
@@ -208,7 +210,7 @@ clears them). The phone remote's d-pad moves through the results.
 
 ## Library and on demand
 
-**V** opens the library, in tabs (**Tab** switches, **1** to **4** go straight to one):
+**V** opens the library, in tabs (**Tab** switches, a number key goes straight to one):
 
 - **Movies & Series:** what your playlists carry that isn't live TV. When you
   add an M3U playlist, its video files (`.mp4`, `.mkv`…, or an IPTV provider's
@@ -223,18 +225,22 @@ clears them). The phone remote's d-pad moves through the results.
   each with its length and a picture from it. Settings turns it off or picks
   another folder; off, it leaves the library, Home and the nav rail. Nothing
   is copied or uploaded.
+- **Recordings:** what you've recorded and what's coming (see
+  [Recordings](#recordings)); there while Recordings are on, or there are some.
 - **My List:** what you saved (**L** on anything).
 
 Each tab starts with Continue watching (**X** takes something off it).
 **Enter** opens an item's details (its poster, description, where you
-stopped); **Space** or **Enter** plays it, **R** starts it over.
+stopped); **Space** or **Enter** plays it, **R** starts it over (Recordings: see
+[Recordings](#recordings)). **H** goes to
+Home.
 
 Playing a movie or video:
 
 | Key            | Does                                     |
 |----------------|------------------------------------------|
-| Space / Enter  | Pause, play                              |
-| ← →            | Back, ahead 10 seconds (Shift: a minute) |
+| Space / Enter / K | Pause, play                           |
+| ← → or J L     | Back, ahead 10 seconds (Shift: a minute) |
 | PgUp PgDn      | Ahead, back 10 minutes                   |
 | Home           | From the start                           |
 | I / ↑ / ↓      | Show the player bar                      |
@@ -385,7 +391,7 @@ omarchy-shell om-pg setColor timeline ""        # back to the theme's
 ## Nav rail
 
 Down the left of every screen, an icon for each part: Search, Home, Live TV,
-Movies & Series, On Demand, My Videos, My List, Apps and Settings, the one you're in lit. Press **←** at
+Movies & Series, On Demand, My Videos, Recordings, My List, Apps and Settings, the one you're in lit. Press **←** at
 a screen's left edge (the first card on Home or in the library, the current
 time in the guide, or on the Settings screen) and it widens with their names;
 ↑↓ pick, **Enter** goes, **Esc** closes it. Pointing at it widens it too, and
@@ -396,7 +402,7 @@ What's on it is yours: **C** on the open rail (or *Nav rail* in Settings)
 customizes it in a panel beside it, the rail changing as you go. Space turns
 an item on or off, Shift+↑↓ moves it, and *Show it* picks always (thin), only
 when you go to it, or never. A part that's turned off (Home, when the Home
-screen is off; My Videos, when it's off; Apps, until apps are on) leaves the rail until it's back on,
+screen is off; My Videos, when it's off; Recordings, while they're off and there are none; Apps, until apps are on) leaves the rail until it's back on,
 and your choice for it stays. Settings is always there.
 
 It's themed like the rest (the rail and its items are parts).
@@ -422,6 +428,9 @@ focused one does.
   much is in the library; the movies each playlist brought in, to take out;
   clearing Continue watching; emptying My List. Those last ones need Enter
   twice.
+- **Recordings:** on or off, where recordings go, the space kept free,
+  YouTube quality, how many at once, starting early and ending late, and
+  pause and rewind. See [Recordings](#recordings).
 - **Apps:** apps on or off (off until you turn them on, which asks first),
   Get apps, each installed app with its own switch (Space) and details
   (Enter), Check for updates, and Third-party apps with Install a
@@ -454,7 +463,8 @@ Any channel works: live, scheduled (a YouTube channel's videos on its
 schedule, joined where the show is now) or IPTV.
 
 **Getting there.** While watching a channel full screen, press **I** or
-**Space**: the banner shows its options. **Multiview** is the first; **Enter**
+**Space**: the banner shows its options. **Multiview** is the first (after
+Pause, Back 30 s, Forward 30 s and Live while pause and rewind is on); **Enter**
 starts it with the channel that's on, and the *Add a channel* list opens
 beside it: ↑↓ choose (or type a channel's number to jump to it), **Enter**
 adds, **Esc** when you have enough. Esc with nothing added goes back to that
@@ -506,6 +516,163 @@ A locked channel asks for the passcode before it goes on a tile, and a tile
 whose channel gets locked stops. Turning the TV off, closing Uber TV, or
 playing something else stops every tile.
 
+## Recordings
+
+Record what's on to watch later, on this computer.
+
+Recordings are off to start with. A strip at the bottom of Home and the
+guide asks once, after the question about update notifications: Y turns
+them on, N puts it away (the switch stays in Settings → Recordings).
+
+**Recording.** While watching a channel full screen, press **I** or
+**Space** (▲ on the phone remote): **Record** is among the banner's
+choices. One press records:
+
+- a channel with listings: to the end of the show, plus the end-late minutes
+  (2, unless you change Start early, end late);
+- one without (most live channels): for an hour;
+- a scheduled YouTube channel: the choice says **Save video**, and the video
+  that's on is saved whole, now.
+
+The banner then says **● REC until 9:00**, and its choices become **Stop
+recording** and **Until 9:00 ›**: Enter on that one offers the end of the
+show, 30 minutes more, an hour, two hours, or **Until I stop — 12 h
+maximum** (Esc goes back). Changing channel keeps recording, and other
+channels' banners say what's recording (*● Recording CBS News*).
+
+Anything worth knowing is written on the Record choice before you press it:
+*Uses a 2nd stream from this provider* (some IPTV plans allow one stream at a
+time, so watching and recording at once may stop one), and, when it can't
+start, why: too many are recording already (Recordings at once), the drive
+isn't there, or there isn't enough space.
+
+**Two streams from one provider.** While an IPTV channel records, watching
+another channel from the same playlist (or the one recording) takes a second
+stream from that provider. The first time, Uber TV asks: on the banner when
+you're watching full screen, in a box elsewhere. **Watch anyway**, and it
+doesn't ask again while that provider's recordings run; **Stay** keeps what
+you had. The guide's preview doesn't play those channels meanwhile (it says
+so; Enter asks), and Multiview's *Add a channel* list marks them *2nd
+stream*.
+
+**From the guide.** On a show in the guide, **I** or **Space** (⋯ on the
+phone) opens its choices. **Enter** still watches.
+
+- **Record:** what's on now, to its end plus the end-late minutes (or an hour without listings); a later show on an
+  IPTV channel with listings (5 minutes or longer), scheduled; on a scheduled YouTube channel the
+  choice says **Save video**, and the show you picked (its video) is saved now.
+- **Record every episode:** that show's series, on that channel (an IPTV
+  channel with listings): this
+  episode if it's on, then each one the listings have (they reach about a
+  day and a half ahead, and come twice a day), never one already recorded
+  (by its episode number, else its episode's title).
+- On a show already scheduled: **Cancel recording** (an episode of a series
+  isn't scheduled again), and **Stop recording this series**; on one
+  recording: **Stop recording**.
+
+The cells say what's happening: **Scheduled**, **● Recording**, or
+**Conflict**. Two shows back to back on one channel become one recording
+(its card names both); a show that would take it past its 12 hours goes on
+in a new recording from there. If a playlist changes a channel's link while
+it records, the recording follows the new one, in the same file.
+
+**How many at once.** Two record at the same time unless you choose 1, 3
+or 4 (Settings → Recordings → *Recordings at once*: each is another stream
+and about 3 GB an hour). A show that would be one too many is scheduled as
+a **Conflict**, naming the others, and isn't recorded unless one of them is
+cancelled (then it's Scheduled again); the Record choice says so before you
+press it. The ones scheduled first keep their place.
+
+**Watching recordings.** Library (**V**) → **Recordings**: what needs you
+first (Failed, Missed, Incomplete, Conflict, Drive missing), then what's
+recording now, then what's coming (**Upcoming**, soonest first), then what's
+recorded, newest first. **Enter** (OK on the phone) opens a recording's
+choices:
+
+- recorded, or Incomplete: **Play** (**Resume** and **Start over** once you've watched
+  some) and **Delete recording…** (Enter twice);
+- recording: **Watch live** and **Stop recording** (a YouTube video: **Stop
+  saving**);
+- still to come: **Cancel recording** and **Watch** its channel now;
+- of a series: **Stop recording this series** too;
+- Failed, or Incomplete with nothing saved: **Delete…**; Missed: **Take it off the list…**; Drive missing:
+  **Take it off the list…** (the file stays on the drive).
+
+**Space** plays it at once; on one still recording, it watches that channel
+live. Each card that didn't go as planned says why. Recordings are a row on
+Home and an item on the nav rail too (C on Home, or the rail's Customize,
+moves or hides them).
+
+**With Uber TV closed.** A recording goes on: it's its own service on this
+computer, and the computer doesn't go to sleep while it runs (closing a
+laptop's lid still does). A scheduled one starts on time with the guide
+closed too (Uber TV checks every 30 seconds while you're logged in), and
+joins a show already under way if the computer was asleep when it began.
+Recordings run while you're logged in; not at the login screen, after you
+log out, or while the computer is asleep or off: one whose show ended
+meanwhile is **Missed**. An Omarchy
+notification says when one starts and finishes, or why it stopped early,
+didn't start or was missed (never what it is: the card in Recordings says).
+If the computer can't be kept awake, the banner and the recording's details
+say so while it records.
+
+**Where they go.** Settings → **Recordings**: your Videos folder (an *Uber
+TV Recordings* folder in it), a folder you choose, or a USB drive (one not
+opened yet is opened from here). A drive that isn't plugged in is never
+swapped for the computer's own disk: the recording doesn't start, and you're
+told why. Recordings on a drive that's unplugged stay listed as *Drive
+missing*, and play again when it's back. My Videos leaves the recordings
+folder out.
+
+| Setting | Does |
+|---|---|
+| Recordings | on or off (off takes Record away, and asks first with recordings running or scheduled: they stop or are cancelled; recordings stay, and so does the tab while there are some; a series schedules again once it's back on) |
+| Save recordings to | where, with its free space |
+| Keep free | a recording stops before the drive gets fuller than this (what's recorded is kept); Auto: 8 GB on a small system disk (your home folder's, under 64 GB), 5 GB anywhere else |
+| YouTube quality | 1080p, 720p or 480p (IPTV records as it comes); Auto: 720p on a small system disk, 1080p anywhere else |
+| Recordings at once | 1 to 4 (2 to start with): each is another stream (4 to 8 Mbps at 1080p) and about 3 GB an hour; lowering it doesn't stop one recording |
+| Start early, end late | none, 1 and 2 minutes (to start with), or 2 and 5 (with listings) |
+| Pause and rewind | Off (to start with), 5 min or 30 min: how much of the live channel you watch is kept to pause and go back in (below) |
+
+Recordings are copied as they come, never converted, so they take little of
+the computer's power: about 3 GB an hour at 1080p, 1 to 2 at 720p. They're
+MPEG-TS files (a saved video is .mkv), playable in any player, and readable
+by you alone (except on FAT and exFAT drives, which can't keep files
+private). Each has a details file next to it with what its card shows.
+
+**Pause and rewind.** With Settings → Recordings → *Pause and rewind* on (5
+or 30 minutes), a live channel you watch (IPTV, or a YouTube channel's live
+stream) plays through a rolling buffer on the recordings drive, which keeps
+the last 5 or 30 minutes: full screen, **I** or **Space** (▲ on the phone
+remote) shows **Pause** first (it reads **Resume** while paused), then
+**Back 30 s**, **Forward 30 s** and **Live**; **J**, **K** and **L** go back
+30 s, pause or resume, and go forward 30 s, and the media keys pause and
+resume. The banner says **Live**, or how far behind it you are (*2:15 behind
+live*), which also stays on the picture while you're behind. Paused longer
+than the buffer holds, it resumes at the oldest part kept; forward past live
+is live. Tuning takes a moment longer while it's on (*Starting pause and
+rewind…*): the provider still sees one stream, the buffer's. If the stream
+stops for a while (*Waiting for the channel…*), it goes back to live when
+the stream does. When it can't run (the drive isn't plugged in, can't be
+saved to, or is short of space), the channel plays as usual and Pause says
+why (*Can't pause: the drive isn't plugged in*). The buffer stays while that
+channel is on (full screen or in a window, in the guide's preview, in the
+mini player) and
+is deleted when you change channel, turn the TV off, or open Multiview, a
+video or an app; if Uber TV stops, it's deleted within seconds. It writes to
+the drive the whole time you watch (4 to 8 Mbps at 1080p; 30 minutes is
+about 1 to 2 GB), and stops before the drive gets fuller than you keep. With
+it off, **J**, **K** and **L** show *Pause and rewind is off*, with **Turn on**
+(5 minutes).
+
+**Locked channels.** Recording or scheduling a locked channel asks for the
+passcode, as watching does (a show scheduled while it's unlocked still
+records later). Its recordings play only once it's unlocked, show no picture
+or description while it's locked, and say only *Locked recording* while the
+lock hides titles. The files themselves aren't encrypted: the lock is Uber
+TV's. A recording stays locked when its channel is removed or renamed, as
+the lock itself does.
+
 ## Mini player
 
 Press **P** in the guide (for the highlighted channel) or while watching full
@@ -522,12 +689,15 @@ while you work, like picture-in-picture on a phone.
 - **GUIDE** (or G) goes back to the program guide with the channel still
   playing in the preview box; **double-click** (or FULL) goes back to full
   screen. The picture keeps playing through either switch.
+- **A 2nd stream:** a channel from the same provider as a recording asks
+  first, in its bar: **WATCH ANYWAY** (Enter, OK on the phone) or **STAY**
+  (Esc, BACK on the phone).
 
 ## Media keys
 
 While the TV is on, the guide is a media player like any other (MPRIS), so
 your keyboard's media keys and the bar's media widget work with it:
-**Next / Previous** change channel, **Play/Pause** pauses and resumes, and the
+**Next / Previous** change channel (playing a movie or video, ahead 30 seconds and back 10), **Play/Pause** pauses and resumes, and the
 widget shows the channel, the show and the channel's logo (or the video's
 thumbnail). When the TV is off it steps aside, and the keys go back to your
 other players. If another player is also playing, the shell decides which one
@@ -541,9 +711,20 @@ and a number pad (type 101, and you're on channel 101: it goes after a moment, o
 with every channel and what it's airing; tap one to watch it. No app.
 
 On Home and in the library the d-pad moves and OK opens; playing a movie,
-← → seek and OK pauses. Watching a channel full screen, ↑ opens the banner's
-choices (← → choose, OK picks, ↓ or BACK closes them), ← → change the
-channel, and OK shows the banner.
+← → seek and OK pauses. In the guide, ⋯ opens a show's choices (Watch,
+and Record while Recordings are on); on Home, it customizes Home. Watching a channel full screen, ↑
+opens the banner's choices (Multiview, Record while Recordings are on, Mini
+player, Guide, Mute; with pause and rewind on, Pause, Back 30 s, Forward 30 s
+and Live first; ← → choose, OK picks, ↓ or BACK closes
+them), ← → change the channel, and OK shows the banner. ⋯ does what **I**
+does: full screen, the banner's choices (a movie, its player bar); in the
+mini player, its bar.
+
+Under what's on, the phone says what the banner does about recording (*● REC
+until 9:30 PM*, or what's recording on another channel) and pause and rewind
+(*Paused*, or how far behind live). The strip's question on Home and the
+guide (update notifications, Recordings) shows on the phone too: **TURN ON**
+or **DISMISS** answer it.
 
 It is **off** until you turn it on. Press **T** (on Home or in the guide), or
 open Settings (**,**) and choose *Phone remote*:

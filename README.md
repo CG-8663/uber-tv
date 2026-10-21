@@ -8,31 +8,31 @@ one screen you drive with the keyboard, the mouse or your phone.
 
 ## Features
 
-- **Live TV guide.** Each YouTube channel plays its videos on a daily
-  schedule, so tuning in joins whatever is "on", like broadcast TV. Channels
-  streaming live (24/7 news, music, cams) play live. IPTV playlists (M3U,
-  M3U8) add real live channels, with program listings (XMLTV).
-- **A demo lineup.** 163 ready-made channels in 30 categories, offered on
-  first start and in Settings.
+- **Live TV guide.** YouTube channels play their videos on a daily schedule,
+  so tuning in joins whatever is "on". Live streams play live. IPTV playlists
+  (M3U, M3U8) add live channels, with program listings (XMLTV).
+- **A demo lineup.** 163 channels in 30 categories, offered on first start.
 - **On demand.** Movies and series from your playlists, your channels'
   videos and your own videos, with resume, My List and Continue watching.
 - **Search** across channels, shows, movies and videos as you type.
-- **Make it yours.** Seven built-in themes, and every color, shape, font and
-  layout can be changed. Arrange Home and the nav rail. Full screen or in a
-  window.
-- **Multiview.** Up to four channels at once (side by side, featured, grid
-  or row), live or scheduled, the sound from the one you pick.
+- **Recordings.** Record what's on with one press, or schedule later shows
+  and every episode of a series, even with Uber TV closed. Save to your
+  Videos folder, another folder or a USB drive. Pause and rewind live TV.
+  Both are off until you turn them on.
+- **Multiview.** Up to four channels at once, the sound from the one you
+  pick.
+- **Make it yours.** Seven built-in themes; change any color, shape, font or
+  layout. Arrange Home and the nav rail. Full screen or in a window.
 - **Mini player** in a corner while you work, and media keys that change
   channel.
 - **Phone remote.** Pair a phone on your network: a d-pad, a number pad and
-  the guide.
+  the guide. It shows what's recording and whether the TV is paused or
+  behind live, and answers the strip's questions (TURN ON, DISMISS).
 - **Channel lock.** A passcode for the channels you choose.
-- **Apps.** Launchers for services like Netflix and HBO Max, and apps that
-  run in a sandbox, like Jellyfin and Scores. Third-party apps install from
-  signed files.
+- **Apps.** Launchers for services like Netflix and HBO Max, and sandboxed
+  apps like Jellyfin and Scores. Third-party apps install from signed files.
 - **AI agents, if you want them.** A skill that lets Claude Code, Codex and
-  others theme the guide, add channels or write apps, or save it for any
-  assistant.
+  others theme the guide, add channels, record shows or write apps.
 - **Backups.** Save your channels and settings to one file, and restore them.
 
 ## Screenshots
@@ -71,8 +71,8 @@ omarchy plugin add https://github.com/marcho78/uber-tv.git --enable
 ```
 
 Open it with **Super + Alt + T**, or the TV in the top bar. The first start
-opens in the Premiere theme with five starter channels, and asks, once each,
-whether to load the demo channels, turn on apps, and let AI agents help.
+has five starter channels, and asks once each whether to load the demo
+channels, turn on apps, and let AI agents help.
 
 Nothing beyond a standard Omarchy install is needed: `yt-dlp`,
 `qt6-multimedia` with FFmpeg, `qrencode`, `bubblewrap` and `ssh-keygen` all
@@ -81,10 +81,10 @@ come with it. If `omacut` was removed, run
 
 ## Update
 
-Turn on **update notifications** in Settings → About to hear about new
-versions, with their release notes. When one is out, **Update now** there
-opens a terminal that shows what changes and asks before updating, then
-restarts the shell. Or, in a terminal:
+Turn on **update notifications** (a strip asks the first time, or Settings →
+About) to hear about new versions and their release notes. **Update now**
+there opens a terminal that shows what changes and asks before updating. Or,
+in a terminal:
 
 ```bash
 omarchy plugin update marcho78.om-pg
@@ -109,9 +109,10 @@ omarchy restart shell
    rm -rf ~/.config/om-pg ~/.local/share/om-pg ~/.local/state/om-pg ~/.cache/om-pg
    ```
 
-   Backups you saved are in `~/Documents/Uber TV backups`. The keyboard
-   shortcut was never written into your Hyprland config; it's gone at your
-   next login.
+   Recordings stay in their folder (`Uber TV Recordings`, in your Videos
+   folder unless you chose another), and backups in
+   `~/Documents/Uber TV backups`. The keyboard shortcut was never written
+   into your Hyprland config; it's gone at your next login.
 
 ## Getting started
 
@@ -142,7 +143,8 @@ Settings → General).
 | ← → | Program, up to 12 hours ahead | Del | Remove a channel |
 | PgUp PgDn | Previous / next category | L | Logos on / off |
 | Enter | Full screen | M | Mute |
-| V | Library: movies, series, videos | R | Refresh listings, re-plan lineups |
+| I or Space | A show's choices: Watch, and Record when Recordings are on | | |
+| V | Library: movies, series, videos, recordings | R | Refresh listings, re-plan lineups |
 | / | Search | K | Key hints on / off |
 | H | Home | T | Phone remote |
 | P | Mini player | S | Style: themes, colors, layout |
@@ -157,10 +159,14 @@ Settings → General).
 |---|---|
 | ↑ ↓ | Channel up / down |
 | Enter or G | Back to the guide |
-| I or Space | Channel banner, with Multiview, Mini player, Guide and Mute (← → choose, Enter picks) |
+| I or Space | The banner's choices: Multiview, Record, Pause… (← → choose, Enter picks) |
+| J K L | Pause and rewind: back 30 s, pause or resume, forward 30 s |
 | P | Mini player |
 | M | Mute |
 | Esc | TV off, back |
+
+<details>
+<summary><b>More keys:</b> Multiview, Home, the library, movies and videos, the mini player, search, apps, managing channels</summary>
 
 **Multiview** (from a channel's banner: I or Space, then Multiview)
 
@@ -172,9 +178,6 @@ Settings → General).
 | Del | Take a tile off |
 | L | Layout |
 | Esc | Exit: the channel with the sound plays full screen |
-
-<details>
-<summary><b>More keys:</b> Home, the library, movies and videos, the mini player, search, apps, managing channels</summary>
 
 **Home**
 
@@ -194,21 +197,24 @@ Settings → General).
 | Key | Does |
 |---|---|
 | ↑ ↓ ← → | Move |
-| Enter | Details |
-| Space | Play, or resume |
+| Enter | Details (Recordings: its choices) |
+| Space | Play, or resume (recording now: watch it live) |
 | L | Add to / take off My List |
-| Tab, or 1 to 4 | Next tab, or go to one |
+| Tab, or a number | Next tab, or go to one |
 | X | Take off Continue watching |
 | / | Search |
 | V | The guide |
+| H | Home |
 | Esc | Back |
 
 **Playing a movie or video**
 
 | Key | Does |
 |---|---|
-| Space | Pause / play |
-| ← → | Back / ahead 10 s (with Shift: 1 min) |
+| Space, Enter or K | Pause / play |
+| ← → or J L | Back / ahead 10 s (with Shift: 1 min) |
+| PgUp PgDn | Ahead / back 10 min |
+| I, ↑ or ↓ | The player bar |
 | Home | From the start |
 | P | Mini player |
 | Esc | Stop; it remembers where |
@@ -268,7 +274,10 @@ Drag it to move it, scroll on it to resize it.
 - Nothing listens on the network unless you turn on the phone remote.
 - Apps that run code have no network of their own, and no access to your
   files: Uber TV fetches for them, only from the sites you approved.
-- Your settings and secrets are files only you can read.
+- Your settings and secrets are files only you can read, and so are your
+  recordings (except on FAT and exFAT drives, which can't keep files
+  private). A channel's address, which can hold your provider's login,
+  never goes on a command line or next to a recording.
 - It asks for your computer's password only for things you start, such as
   the phone remote's firewall rule or turning on third-party apps.
 

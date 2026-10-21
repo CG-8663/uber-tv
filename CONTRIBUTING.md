@@ -90,6 +90,9 @@ node tests/awake.test.mjs     # when the screen is kept awake: off, while a vide
 node tests/saver.test.mjs     # the screen saver: its settings, its pictures, when it may come, what an agent may change
 node tests/channellock.test.mjs   # the channel lock: which channels (by address, then name), blocked or not, typing a passcode
 node tests/multiview.test.mjs     # Multiview and the guide: the media player while it's up, a saved theme keeping its background, the agent commands
+node tests/playback.test.mjs      # every player's sound follows the system's output; Home is made only while it's on screen
+node tests/dvr.test.mjs           # Recordings, the guide's side: what Record records, the stop times, the banner's and a recording's choices, the lock, the agent commands
+node tests/timeshift.test.mjs     # pause and rewind, the guide's side: what the buffer takes, each move a new open, the clock, falling back only once the writer's gone, the words, the agents
 node tests/remotepage.test.mjs    # the phone remote's page: a number on GO or OK, the passcode as dots, sent as text
 python3 tests/apps.test.py    # installing apps: good ones, and ones that try to get past the checks
 python3 tests/appfiles.test.py   # signed app files, updates, withdrawals, transactions and publisher workspaces
@@ -103,6 +106,8 @@ python3 tests/snapshots.test.py   # snapshot files put in place whole, and the g
 python3 tests/saver.test.py   # the screen saver's pictures: links, fakes, sizes, depth, the cap, Omarchy's folders, your folder made only at home
 python3 tests/lock.test.py    # the channel lock's passcode: only a hash, changing it, wrong tries slowing down, a sound file
 python3 tests/streamer.test.py   # the streamer's playlists: the height asked for, the cache keeping each quality apart, ?h= checked
+python3 tests/dvr.test.py     # the recorder: places checked, drives found again, the relay against hostile playlists (with real ffmpeg), the state under its lock, a recording end to end
+python3 tests/dvrbuffer.test.py   # pause and rewind's buffer: the published playlist and what's deleted, the server, the helper, and end to end with real ffmpeg (a new address, a swapped folder, too little space, the lease)
 python3 tests/epg.test.py     # program listings: plain, gzip and xz; the .xz memory cap, the unpacked cap, flat memory, the run's time limit
 python3 tests/remote.test.py  # the phone remote's commands: the passcode as text, 4 to 8 digits, only from a paired phone; pairing only from a phone, and the device list saved under one lock
 python3 tests/jellyfin.test.py tests/appmedia.test.py tests/appplayback.test.py   # Jellyfin, media checks, playback

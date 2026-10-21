@@ -53,6 +53,15 @@
   .now .title { font-weight: bold; font-size: 14px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .now .when { color: var(--dim); font-size: 11px; }
   .badge { color: var(--yellow); font-size: 11px; margin-left: 6px; }
+  .now .dvr { font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dvr .rec { color: var(--red); font-weight: bold; }
+  .dvr .pause { color: var(--yellow); }
+
+  /* The TV's question (the strip on Home and the guide), answered here too */
+  .ask { flex: none; padding: 8px 10px; border: 1px solid var(--yellow); border-radius: 6px; background: rgba(0,0,0,.25); }
+  .ask p { margin: 0 0 8px; font-size: 12px; line-height: 1.4; }
+  .ask .answers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; height: 40px; }
+  .ask button { font-size: 13px; }
   .typed {
     position: absolute; inset: 0; display: none; align-items: center; justify-content: center; gap: 12px;
     background: rgba(3,10,43,.94); border-radius: 6px; color: var(--yellow); font-weight: bold; font-size: 26px; letter-spacing: .3em;
@@ -136,8 +145,14 @@
         <div><span class="ch" id="channel">TV IS OFF</span><span class="badge" id="badge"></span></div>
         <div class="title" id="title">Press POWER to turn it on.</div>
         <div class="when" id="when"></div>
+        <div class="dvr" id="dvr" hidden><span class="rec" id="rec"></span><span class="pause" id="pause"></span></div>
       </div>
       <div class="typed" id="typed"></div>
+    </div>
+
+    <div class="ask hidden" id="ask">
+      <p id="askText"></p>
+      <div class="answers"><button class="yellow" data-cmd="yes">TURN ON</button><button data-cmd="no">DISMISS</button></div>
     </div>
 
     <nav class="tabs"><a href="#" id="tabRemote" class="on">REMOTE</a><a href="#" id="tabGuide">GUIDE</a></nav>
@@ -254,6 +269,13 @@
       when = clock(now.start) + " – " + clock(now.end) + "  ·  " + left + " min left"
     }
     $("#when").textContent = when
+    // recording and pause and rewind, as the TV's banner says them
+    $("#rec").textContent = state.rec || ""
+    $("#pause").textContent = (state.rec && state.pause ? "  ·  " : "") + (state.pause || "")
+    $("#dvr").hidden = !state.rec && !state.pause
+    // the TV's question: TURN ON or DISMISS answer it, as Y and N
+    $("#ask").classList.toggle("hidden", !state.ask)
+    $("#askText").textContent = state.ask ? state.ask.text : ""
     const logo = $("#logo"), src = now ? logoUrl(now.channelId) : ""
     logo.hidden = !src
     if (src && logo.getAttribute("src") !== src) logo.src = src

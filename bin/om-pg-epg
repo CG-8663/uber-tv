@@ -15,7 +15,8 @@ the East (not Pacific or West) feed. The shows of matched channels between
 "from" and "to" are written to "out" as JSON, readable by you alone:
 {"fetched", "from", "to", "sources": [{"url", "ok", "error", "channels",
 "matched", "shows"}], "shows": {channel url: [[start, end, title, description,
-category], ...]}}.
+category, episode title, episode], ...]}} (the episode as "S2E5", or as
+XMLTV gives it, for Record every episode).
 
 Prints a JSON line as each source goes ({"source", "status"}), then
 {"done": true, "matched": n}. Out of time, the shows you had stay (with any
@@ -97,6 +98,26 @@ def xmltv_time(text):
         sign = 1 if zone[0] == "+" else -1
         t -= sign * (int(zone[1:3]) * 3600 + int(zone[3:5]) * 60)
     return int(t)
+
+
+def episode_of(el):
+    """A show's episode, as one short text a series recording can tell
+    episodes apart by: what's shown on screen ("S02E05"), else XMLTV's
+    zero-based "season.episode.part" as S3E6, else another system's id"""
+    nums = {}
+    for n in el.findall("episode-num"):
+        text = (n.text or "").strip()
+        if text:
+            nums.setdefault((n.get("system") or "").strip().lower(), text)
+    if "onscreen" in nums:
+        return nums["onscreen"][:40]
+    m = re.match(r"^\s*(\d*)\s*(?:/\s*\d+)?\s*\.\s*(\d*)\s*(?:/\s*\d+)?\s*\.", nums.get("xmltv_ns", "") + ".")
+    if m and (m.group(1) or m.group(2)):
+        return ((("S%d" % (int(m.group(1)) + 1)) if m.group(1) else "") + (("E%d" % (int(m.group(2)) + 1)) if m.group(2) else ""))[:40]
+    for system in sorted(nums):
+        if system != "xmltv_ns":
+            return (system + ":" + nums[system])[:40] if system else nums[system][:40]
+    return ""
 
 
 def fetch(source, folder):
@@ -305,12 +326,14 @@ def read(path, matcher, start, end, taken):
                         desc = (el.findtext("desc") or "").strip()[:500]
                         sub = (el.findtext("sub-title") or "").strip()[:120]
                         cat = (el.findtext("category") or "").strip()[:40]
+                        ep = episode_of(el)
                         if sub and sub.lower() not in title.lower():
                             desc = (sub + ". " + desc).strip()[:500]
                         for url in urls:
                             lst = shows.setdefault(url, [])
                             if len(lst) < MAX_SHOWS:
-                                lst.append([a, b, title or "Untitled", desc, cat])
+                                # (the episode's own title and number too, for Record every episode)
+                                lst.append([a, b, title or "Untitled", desc, cat, sub, ep])
                 el.clear()
             root.clear()   # a cleared element still hangs off the root: let go of it, so memory stays flat
             f.since = 0

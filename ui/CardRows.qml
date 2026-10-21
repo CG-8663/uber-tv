@@ -5,7 +5,8 @@ import "../Look.js" as Look
 // pictures (videos, channels), each with its title, how far in you are,
 // Live, Watched and My List. The library and Search show their results in
 // them. Styled by the library elements (rowTitle, posterCard, posterTitle,
-// posterSub, liveBadge, cardBadge, vodProgress).
+// posterSub, liveBadge, cardBadge, vodProgress); a recording's card by the
+// recording ones (recordingCard, recordingState, recordingProgress).
 ListView {
   id: rowsView
 
@@ -93,6 +94,9 @@ ListView {
         required property int index
         readonly property bool current: rowItem.currentRow && index === rowItem.col
         readonly property bool isChannel: modelData.kind === "channel"
+        readonly property bool isRec: modelData.kind === "recording"
+        // recording now: how far to its stop time
+        readonly property real recProgress: isRec ? (modelData.recProgress || 0) : 0
         // a channel's card: how far into the show; anything else: how far you watched
         readonly property real progress: isChannel ? (modelData.progress || 0) : guide.libProgress(modelData.id)
         readonly property bool finished: !isChannel && guide.libFinished(modelData.id)
@@ -104,7 +108,9 @@ ListView {
           id: frame
           width: parent.width
           height: rowsView.imageH(rowItem.shape)
-          s: card.current ? guide.look["posterCard:current"] : guide.look.posterCard
+          readonly property string recKind: card.isRec && (card.modelData.recState === "Scheduled" || card.modelData.recState === "Conflict") ? "upcomingRecording" : "recordingCard"
+          s: card.isRec ? (card.current ? guide.look[recKind + ":current"] : guide.look[recKind])
+                        : card.current ? guide.look["posterCard:current"] : guide.look.posterCard
           unit: rowsView.u
           scale: card.current ? 1.05 : 1
           Behavior on scale { NumberAnimation { duration: 140 } }
@@ -127,7 +133,7 @@ ListView {
             anchors.fill: parent
             anchors.margins: rowsView.u * 1.2
             visible: picture.status !== Image.Ready
-            source: picture.status !== Image.Ready && card.isChannel ? card.modelData.logo || "" : ""
+            source: picture.status !== Image.Ready && (card.isChannel || card.isRec) ? card.modelData.logo || "" : ""
             sourceSize.width: 192
             fillMode: Image.PreserveAspectFit
             asynchronous: true
@@ -147,9 +153,46 @@ ListView {
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
           }
+          // a recording's state (Recording, Failed…), and how far it is to its stop time
+          Box {
+            id: recState
+            readonly property string word: card.isRec ? card.modelData.recState || "" : ""
+            readonly property string sk: word === "Recording" || word === "Saving" ? ":recording" : word === "Scheduled" ? ":scheduled"
+                                       : word === "Failed" || word === "Missed" || word === "Incomplete" || word === "Conflict" || word === "Drive missing" ? ":attention" : ""
+            visible: word !== "" && word !== "Done"
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.margins: rowsView.u * 0.4
+            width: recWord.implicitWidth + recState.padding * 2
+            height: recWord.implicitHeight + recState.padding * 0.6
+            s: guide.look["recordingState" + sk] || guide.look.recordingState
+            unit: rowsView.u
+            Label {
+              id: recWord
+              anchors.centerIn: parent
+              text: (recState.sk === ":recording" ? "● " : "") + recState.word
+              s: guide.look["recordingState" + recState.sk] || guide.look.recordingState
+              unit: rowsView.u
+            }
+          }
+          Rectangle {
+            readonly property var rb: guide.look.recordingProgress || ({})
+            visible: card.recProgress > 0
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: frame.borderWidth
+            height: Math.max(3, Look.px(rb.height, rowsView.u))
+            color: rb.track || "transparent"
+            Rectangle {
+              height: parent.height
+              width: parent.width * card.recProgress
+              color: parent.rb.fill && typeof parent.rb.fill === "object" ? parent.rb.fill.from : (parent.rb.fill || "transparent")
+            }
+          }
           // how far in
           Rectangle {
-            visible: card.progress > 0.01 && !card.finished
+            visible: card.progress > 0.01 && !card.finished && card.recProgress <= 0
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom

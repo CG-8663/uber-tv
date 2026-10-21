@@ -66,8 +66,34 @@ Rectangle {
     clock: guide.clock(guide.now)
     times: !guide.onAir ? "" : guide.onAir.live && !guide.onAir.epg ? "● LIVE" : guide.clock(guide.onAir.start) + " – " + guide.clock(guide.onAir.end)
     options: guide.bannerOptions ? guide.bannerActions : []
+    recording: guide.recBadge
+    timeshift: guide.pauser.chipText
+    behindLive: guide.pauser.active && !guide.pauser.atLive
+    note: guide.recNote
     optionFocus: guide.bannerAct
     onOptionPicked: function(i) { guide.bannerAct = i; guide.pickBannerAct(i) }
+  }
+
+  // Behind live (pause and rewind), on the picture while the banner's away
+  Box {
+    id: behindChip
+    z: 2
+    visible: guide.pauser.active && !guide.pauser.atLive && guide.vod === null && !guide.bannerShown && !guide.bannerOptions
+    readonly property var st: guide.look["liveChip:behind"] || guide.look.liveChip || ({})
+    anchors.right: parent.right
+    anchors.top: parent.top
+    anchors.margins: guide.u * 1.5
+    width: behindText.implicitWidth + padding * 2
+    height: behindText.implicitHeight + padding * 0.6
+    s: behindChip.st
+    unit: guide.u
+    Label {
+      id: behindText
+      anchors.centerIn: parent
+      text: guide.pauser.chipText
+      s: behindChip.st
+      unit: guide.u
+    }
   }
 
   // Choosing on the banner: its keys, top left
@@ -80,6 +106,6 @@ Rectangle {
     size: guide.u * 1.55
     capStyle: guide.look.keycap
     labelStyle: guide.look.keyLabel
-    model: [{ keys: ["←", "→"], label: "Choose" }, { keys: ["ENTER"], label: "Pick" }, { keys: ["ESC"], label: "Hide" }]
+    model: [{ keys: ["←", "→"], label: "Choose" }, { keys: ["ENTER"], label: "Pick" }, { keys: ["ESC"], label: guide.recStopMenu ? "Back" : "Hide" }]
   }
 }

@@ -59,14 +59,55 @@ touches.
   length and a picture from it, readable by you alone), with program
   listings, `~/.cache/om-pg/epg.json` (your channels' shows for today and
   tomorrow, readable by you alone), with logos on,
-  `~/.cache/om-pg/logos/` (one small image per channel), and, with the screen
-  saver, `~/.config/om-pg/lock.json` (the channel lock: its passcode only as a
+  `~/.cache/om-pg/logos/` (one small image per channel), and, with the channel
+  lock, `~/.config/om-pg/lock.json` (the channel lock: its passcode only as a
   salted scrypt hash, the locked channels and its options; readable by you
   alone, written whole by `bin/om-pg-apps`, never `settings.json`), with the screen
   saver, `~/.cache/om-pg/saver/` (copies of the pictures it's showing, copied
   from the very file that was checked, readable by you alone: the newest
   twelve, gone when it closes). It makes your screen saver folder (only inside
   your home folder) when you open it from Settings. Nothing else.
+- **Recordings**, only when you record: the recording and a details file
+  next to it (what its card shows and a SHA-256 of its channel's address,
+  never the address) in the place you chose, by default `Uber TV
+  Recordings` in your Videos folder (made the first time, with a
+  `.uber-tv-recordings` marker; files readable by you alone where the drive
+  allows); `~/.config/om-pg/dvr/state.json` (what's recording, scheduled and
+  been recorded, and your series, readable by you alone, changed under a
+  lock; a stream's address is kept there only while its recording runs, never
+  with a schedule: it's looked up when one is due) and a picture of each in
+  `~/.cache/om-pg/recordings/`. Each recording is `bin/om-pg-dvr run <id>`, a
+  systemd user service started by `systemd-run --user` with only its id, a
+  memory cap and a 13-hour limit; it holds a sleep inhibitor
+  (`systemd-inhibit`, "Recording TV") while it runs, and `notify-send` says
+  how it went. IPTV and YouTube live go through a relay on 127.0.0.1
+  (`lib/dvrproxy.py`, on a free port under a secret path, only for that
+  recording, serving only what the stream's own playlists lead to), so
+  `ffmpeg` never has the stream's address on its command line, and it may
+  follow http and https only: a playlist can't make it read a file or a
+  socket. A scheduled YouTube video is saved by `yt-dlp`, which never reads
+  your config or plugins. A place is checked before each recording: the same
+  filesystem it was (a drive that's gone is never replaced by the computer's
+  own disk), never a hidden, system, temporary or Uber TV folder. `lsblk`
+  lists USB drives, and `udisksctl mount` opens one only when you pick it in
+  Settings.
+- **Pause and rewind**, only while it's on and you watch a live channel: the
+  last 5 or 30 minutes of it in `.uber-tv-buffer/<session>/` at the
+  recordings place (readable by you alone where the drive allows), and
+  `~/.config/om-pg/dvr/buffers/<session>.json` while it runs (its stream's
+  address, readable by you alone, deleted with it). Each session is
+  `bin/om-pg-dvr buffer-run <id>`, a systemd user service started with only
+  its id, a memory cap and a day's limit. It copies through the same relay,
+  so the address never reaches `ffmpeg`'s command line, and writes through
+  its folder's descriptor (`/proc/self/fd/…`), so a drive that's gone fails
+  rather than sending it to the computer's own disk; it stops before the
+  drive gets fuller than you keep. The guide's player reads it from
+  `lib/dvrbuffer.py` on 127.0.0.1, a free port under a secret path made for
+  the session, serving only its own playlist and the segments it still keeps,
+  by exact name, never following a link. The guide asking for its status is
+  its lease: without it for 20 seconds (the shell gone), the session stops
+  and deletes its folder; anything left by a crash goes when the next one
+  starts.
 - **Runs** `yt-dlp` (listings), `find` (listing your channel-list files, or
   pictures for a background, for the picker; hidden folders are skipped, but
   Omarchy's backgrounds are included, or folders for My Videos; browsing, the
@@ -118,8 +159,10 @@ touches.
   most), plays their streams (http or https), and, with logos on, their logos
   (images only, under 512 KB, redirects only to http or https). Links to anywhere else are dropped, whether pasted,
   imported, or hand-edited into the saved list.
-- **Listens** on `127.0.0.1` (the streamer, on a random port). Every request
-  must carry a secret made at startup, so web pages and other programs can't
+- **Listens** on `127.0.0.1` (the streamer, on a random port; and, while
+  recording or pausing, the recording relay and the pause-and-rewind buffer,
+  both above, each on its own random port under its own secret path). Every
+  request to the streamer must carry a secret made at startup, so web pages and other programs can't
   use it; it answers only `/<secret>/play/<11-character video id>.m3u8` and
   `/<secret>/logo/<channel id>.jpg`.
 - **Shows** channel names and video titles as plain text, never as rich text,

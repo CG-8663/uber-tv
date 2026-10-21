@@ -21,8 +21,11 @@ description: >
   Videos) on demand, add
   M3U/M3U8 IPTV playlists (their movies go to the library), YouTube channels or
   channel lists, sort channels into categories, rename or remove channels,
-  choose what the guide shows, and open it on a channel. Triggers: program
-  guide, TV guide, EPG, om-pg, IPTV, m3u, m3u8, playlist, VOD, movies, "make a
+  choose what the guide shows, and open it on a channel. Record channels and
+  shows (DVR): what's on now, later shows and every episode of a series; pause
+  and rewind live TV. Triggers: program guide, TV guide, EPG, om-pg, IPTV, m3u,
+  m3u8, playlist, VOD, movies, record, recording, DVR, "record channel",
+  "record every episode", "pause the TV", "rewind", "make a
   theme for the guide", "make the guide look like…", "round the cells", "change
   the guide's font", "change the guide's colors", "use this picture for the
   lower third", "put this picture behind Home", "add a row to Home", "save this
@@ -47,7 +50,7 @@ or the Uber TV plugin isn't installed or is turned off.
 | Command | What it does |
 |---|---|
 | `omarchy-shell om-pg help` | these commands |
-| `omarchy-shell om-pg state` | the guide at a glance: open or not, the channel on, how many channels, the theme, what's shown, settings, and `multiview` (its channels in order, which has the sound, the layout) while it's on |
+| `omarchy-shell om-pg state` | the guide at a glance: open or not, the channel on, how many channels, the theme, what's shown, settings, `recordings` (`{on, recording, scheduled, series}`: on or not, how many recording now, how many waiting (Scheduled or Conflict), how many series), `pauseAndRewind` (`{on, running, paused, behindSeconds}`), and `multiview` (its channels in order, which has the sound, the layout) while it's on |
 | `omarchy-shell om-pg open` | opens the guide (full screen, over everything), on Home when Home is on |
 | `omarchy-shell om-pg display <full\|window\|"">` | how the guide shows: `full` (over everything, the Omarchy bar too) or `window` (an ordinary window, maximized under the bar, on its own desktop); `""` says which |
 | `omarchy-shell om-pg close` | closes it, and turns the TV off |
@@ -58,14 +61,33 @@ or the Uber TV plugin isn't installed or is turned off.
 | `omarchy-shell om-pg multiviewLayout <side\|featured\|grid\|row>` | Multiview's layout, one for how many channels it has |
 | `omarchy-shell om-pg multiviewSound <number>` | which of Multiview's channels has the sound |
 | `omarchy-shell om-pg multiviewClose` | closes Multiview: the channel with the sound plays full screen |
+| `omarchy-shell om-pg record <number> "<length>"` | records a channel from now (see Recordings): `""` to its show's end plus the end-late minutes with listings (an hour without), or minutes (`90`) or hours (`2h`), 12 hours at most; a scheduled YouTube channel's show is its video, saved whole. Not a locked channel. As many at once as Settings → Recordings allows (2 unless the user chose otherwise) |
+| `omarchy-shell om-pg recordShow <number> <HH:MM\|"YYYY-MM-DD HH:MM"\|next>` | records a later show (an IPTV channel with listings; 5 minutes or longer): the one on at that time today (tomorrow, if it's gone by), on that day at that time (`shows` gives each one's `when`), at a show's `start` (seconds, from `shows`: use it for the hour that repeats when the clocks go back), or the next one. Scheduled, or a Conflict when it'd be one too many (Recordings at once; `recordings` names the others). Not a locked channel |
+| `omarchy-shell om-pg recordSeries <number> <HH:MM\|"YYYY-MM-DD HH:MM"\|now\|next>` | Record every episode of the show on at that time (or on that day at that time): this one too if it's on, then each episode the listings have (about a day and a half ahead, fetched twice a day), never one recorded already. Not a locked channel |
+| `omarchy-shell om-pg cancelRecording <id>` | cancels a scheduled recording (an episode of a series isn't scheduled again), or a series by its id (its rule and its shows not started; what it recorded stays). Only when the user asks |
+| `omarchy-shell om-pg recordUntil <id> <minutes\|HH:MM>` | a new stop time for a recording: minutes from now, or a clock time, within 12 hours of its start |
+| `omarchy-shell om-pg stopRecording <id>` | stops a recording; what's recorded is kept |
+| `omarchy-shell om-pg recordings` | the recordings (the first 300): `{id, state, kind, locked, title, channel, started, until, show, records, series, seconds, bytes, why, file}` (state Scheduled, Conflict, Starting, Recording, Saving (a YouTube video), Done, Missed, Incomplete, Failed or Drive missing), the series (`{id, title, channel}`), plus the settings. A locked channel's say only `Locked recording` |
+| `omarchy-shell om-pg playRecording <id>` | plays a recording full screen, from where the user stopped (not a locked channel's) |
+| `omarchy-shell om-pg startOver <id>` | plays a recording, a library item or one of the user's videos full screen from the start (`playRecording` and `play` resume); not a locked channel's |
+| `omarchy-shell om-pg removeRecording <id>` | deletes a recording: its file, details and picture (one on an unplugged drive comes off the list, its file stays). Only when the user asks |
+| `omarchy-shell om-pg recordingDrives` | the USB drives plugged in, mounted or not |
+| `omarchy-shell om-pg recordingSettings` | Settings → Recordings: on, where recordings go (and its free space), space kept free (`keepFree`, and `keepFreeNow` in GB), YouTube quality (`quality`, and `qualityNow`), padding, how many at once (`atOnce`), pause and rewind (`pauseAndRewind`: minutes kept, 0 off), and the USB drives (`drives`) |
+| `omarchy-shell om-pg setRecordingSettings '<json>'` | changes them: `{"on", "place": "videos" \| "/a/folder" \| "drive:<device>", "keepFree": "auto" \| 2 \| 5 \| 8 \| 10 \| 20, "quality": "auto" \| 1080 \| 720 \| 480, "padding": 0 \| 1 \| 2, "atOnce": 1 \| 2 \| 3 \| 4, "pauseAndRewind": 0 \| 5 \| 30}` (`on` only when the user asks; atOnce only when the user asks: each is another stream and ~3 GB an hour; pauseAndRewind only when the user asks: it writes to the recordings drive the whole time they watch); off while one records or is scheduled needs `"stopAndCancel": true`, once the user says so |
+| `omarchy-shell om-pg pauseLive` | pauses the live channel on the TV, or resumes it (pause and rewind on, its buffer ready): `{paused, live, behindSeconds}` |
+| `omarchy-shell om-pg seekLive <seconds>` | back (negative) or forward by that many seconds, as far as pause and rewind's buffer goes; past live is live |
+| `omarchy-shell om-pg goLive` | back to live |
+| `omarchy-shell om-pg libraryTabs` | the library's tabs in order, and which show |
+| `omarchy-shell om-pg setLibraryTabs "<keys>"` | their order, with commas (`movies`, `ondemand`, `videos`, `recordings`, `mylist`); the rest follow in theirs |
 | `omarchy-shell om-pg home` | Home: its sections in order (on or off), its tiles, its background, and the rows that can be added |
 | `omarchy-shell om-pg setHome '<json>'` | changes Home: `{"sections": [...], "tiles": [...], "background": {...}, "on": true}`, any part left out stays (see Home) |
 | `omarchy-shell om-pg rail` | the nav rail: when it shows (`always`, `focus`, `none`) and its items in order, each on or off, and whether each one's part is turned on |
-| `omarchy-shell om-pg setRail "<items>" <always\|focus\|none>` | the rail's items in order, with commas (`search`, `home`, `tv`, `movies`, `ondemand`, `videos`, `mylist`, `apps`, `settings`): the ones named are on, the rest off (`settings` always stays). `""` keeps either |
+| `omarchy-shell om-pg setRail "<items>" <always\|focus\|none>` | the rail's items in order, with commas (`search`, `home`, `tv`, `movies`, `ondemand`, `videos`, `recordings`, `mylist`, `apps`, `settings`): the ones named are on, the rest off (`settings` always stays). `""` keeps either |
 | `omarchy-shell om-pg listings` | program listings (XMLTV) for IPTV channels: the sources, how many channels each matched, errors, when fetched, and how many IPTV channels have listings |
 | `omarchy-shell om-pg addListings "<link or path>"` | adds a source of program listings: a link to an XMLTV file (`.xml`, `.xml.gz`, `.xml.xz`) or a full path to one. Fetched at once; run `listings` a minute later |
 | `omarchy-shell om-pg removeListings "<link or path>"` | takes a source of listings off. Only when the user asks |
 | `omarchy-shell om-pg search "<words>"` | what matches, as the guide's Search shows it: `channels` (with `watch` numbers), `onNow`, `laterToday`, `movies` (series with their episodes' ids), `videos`, `myVideos` (with `play` ids). Channels and shows follow what the guide shows |
+| `omarchy-shell om-pg shows <number> "<words>"` | the shows ahead in the listings (IPTV channels with listings, about a day and a half): a channel's (`""` for every channel), the ones whose title or episode has the words (`""` for all); the first 100, soonest first: `{total, more, shows: [{number, channel, title, episode, episodeNumber, start, end, when, onNow, recording}]}` (`recording`: recording, scheduled or conflict). Not a locked channel's |
 | `omarchy-shell om-pg library "<words>"` | movies and series in the library matching the words (`""`: the first 100), with their ids, genres, and where the user stopped |
 | `omarchy-shell om-pg videos "<words>"` | My Videos: on or not, its folder, and the user's videos in it matching the words (`""`: the newest 100), with their ids, folders and lengths |
 | `omarchy-shell om-pg setVideos <on\|off> "<folder>"` | My Videos on or off, and the folder it shows (a full path). `""` keeps either |
@@ -319,8 +341,9 @@ each is, its states, and whether the theme or the user styles it); `elements
 | Board | `flapTile` (`:status`) |
 | Home | `homeTile` (`:current`), `homeCard` (`:current`), `homeCardTitle`, `homeCardSub`, `homeRowTitle`, `heroKicker`, `heroTitle`, `heroMeta`, `statusChip`, `homeShade` |
 | Library | `libraryTab` (`:current`), `rowTitle`, `posterCard` (`:current`), `posterTitle`, `posterSub`, `liveBadge`, `cardBadge` |
+| Recordings | `recordBadge` (follows `liveBadge`: ● REC and its stop time on the banner), `recordChoice` (follows `menuRow`, `:focused`: Record, Save video, Stop recording and the stop times among the banner's choices; Record, Record every episode, Cancel recording and Stop recording this series among a show's choices in the guide; a recording's choices in its details), `recordNote` (follows `posterSub`: the line under a Record choice), `recordWarning` (follows `cardBadge`: the word above the banner while watching one channel and recording another from the same provider), `recordDot` (follows `liveTag`: ● Recording, Scheduled or Conflict in a program cell), `recordingCard` (follows `posterCard`, `:current`), `upcomingRecording` (follows `posterCard`, `:current`: a scheduled one's card), `recordingState` (`:recording`, `:scheduled`, `:attention`: the word on a card: Recording, Saving; Scheduled; Failed, Missed, Incomplete, Conflict, Drive missing; none for Done), `recordingProgress` (follows `vodProgress`: how far a recording is to its stop), `liveChip` (`:behind`: Live, or how far behind live, on the banner while pause and rewind is on, and on the picture while it's behind). "A red REC badge with white text" is `setStyle recordBadge '{"fill": "alert", "text": {"color": "#ffffff"}}'` |
 | Multiview | `mvBackground` (follows `background`), `mvTile` (`:current`, the tile with the sound: every tile is framed by a thin border, the current one thicker), `mvStrip` (the band with the channel and what's on), `mvName` (follows `posterTitle`), `mvShow` (follows `posterSub`), `mvSound` (follows `cardBadge`): Multiview's screen, up to four channels at once. "Thicker borders between the tiles" is `setStyle mvTile '{"border": {"width": 0.15}}'` |
-| Apps | `appCard` (`:current`, its `grow`), `appCardTitle`, `appCardSub`, `appRowTitle`, `appBadge`, `appProgress`, `appTopKicker`, `appTopTitle`, `appTopMeta`, `appTopText`, `appDetailTitle`, `appDetailMeta`, `appDetailText`, `appFactLabel`, `appFactValue`, `appChip`, `appButton` (`:focused`), `appShade`: an app's screen. Each follows the guide part it's like (`elements <name>` says which: `appCard` follows `posterCard`, `appButton` follows `menuRow`…), state by state, until styled. Whatever the style, the guide keeps its own focus ring round the selected card, keeps the selected title readable and its text no smaller than its floor, and keeps the strip naming the app on top |
+| Apps | `appCard` (`:current`, its `grow`), `appCardTitle`, `appCardSub`, `appRowTitle`, `appBadge`, `appProgress`, `appTopKicker`, `appTopTitle`, `appTopMeta`, `appTopText`, `appDetailTitle`, `appDetailMeta`, `appDetailText`, `appFactLabel`, `appFactValue`, `appChip`, `appButton` (`:focused`), `appShade`, `appTableHead`, `appTable` (`:focused`), `appTicker`, `appChart`, `appOrigin`, `appPageTitle`, `appPageHeading`, `appPageText`: an app's screen. Each follows the guide part it's like (`elements <name>` says which: `appCard` follows `posterCard`, `appButton` follows `menuRow`…), state by state, until styled. Whatever the style, the guide keeps its own focus ring round the selected card, keeps the selected title readable and its text no smaller than its floor, and keeps the strip naming the app on top |
 | Player | `vodBar`, `vodTitle`, `vodInfo`, `vodTime`, `vodProgress` (on demand: the bar over a movie or video) |
 | Rail | `rail` (`:open`), `railItem` (`:current`, `:focused`) |
 | Menus | `searchField` (`:focused`), `menuCategory` (`:current`, `:focused`), `menuRow` (`:focused`), `menuValue` (`:focused`), `menuHeader`, `menuNote`, `toggle` (`:on`): Settings, the Customize panels, the boxes and the style panel, TV style (big rows, the focused one lit and grown a little, on/off switches) |
@@ -417,7 +440,8 @@ told large at the top, then the user's sections. `home` shows them.
   (what's on in it), `{"type": "folder", "key": "<a My Videos folder, . for
   itself>"}`, `{"type": "upcoming", "key": "<a channel's url>"}` (what's coming
   up on it). `home` lists what can be added. Built in too: `searches` (the
-  user's recent searches).
+  user's recent searches), `recordings` (recording now, then the latest
+  recorded; while Recordings is on or there are some).
 - **A row's options:** `title` (a name of the user's; leave it out for its
   own), `size` (`small`, `medium`, `large`), `limit` (0 for all, 6, 12, 24),
   `sort` (`default`, `newest`, `oldest`, `az`).
@@ -476,6 +500,54 @@ user to pick the rest. `state`'s `multiview` says what's on (`null` when it's
 off). The user does all of this from a channel's banner (I or Space while
 watching) and Multiview's own keys; its background is `multiviewBackground`.
 
+## Recordings
+
+Recordings start off. Until the user turns them on (a strip asks them once,
+or Settings → Recordings), `record`, `recordShow` and `recordSeries` answer
+that Recordings are off. Turn them on (`setRecordingSettings '{"on": true}'`)
+only when the user asks.
+
+The user records what's on from the channel banner (I or Space while
+watching, then Record) or from a show in the guide (I or Space on it), and
+finds recordings in the library's Recordings tab.
+"Record channel 132 for two hours" is `record 132 "2h"`; `""` records to the
+end of the show (with listings, plus the late padding), or an hour without
+listings. On a scheduled YouTube channel it saves the video that's on, whole.
+A recording goes on with the guide closed, while the user is logged in.
+`record` answers at once; `recordings` says a moment later whether it's
+`Recording`, or why it couldn't start (`why`).
+
+A later show: "record Bake Off at nine on 107" is `recordShow 107 21:00`
+(`next` for the next show). Without a channel or a time ("record the next
+Bake Off"), `shows "" "bake off"` finds it: give `recordShow` its number and
+`when` ("2026-10-21 21:00"). "Record every episode" is `recordSeries 107 now`
+(or a time). They need an IPTV channel with listings. A scheduled one starts
+on time with the guide closed, while the user is logged in; one that couldn't
+(logged out, asleep, off) is `Missed`. As many record at once as the user's
+setting says (2 unless they chose 1 to 4: `recordingSettings`' `atOnce`): a
+show that would be one too many is a `Conflict` (`why` names the others) and
+records only if one of them is cancelled. `cancelRecording` cancels a scheduled one, or a
+series by its id from `recordings`' `series`, only when the user asks. A
+locked channel is refused (only the user unlocks it, at the screen), and its
+recordings say nothing about themselves to you. While an IPTV channel
+records, `watch`, `multiview` and `multiviewAdd` refuse another channel from
+the same provider (a second stream may stop the recording): ask the user;
+the guide asks them when they go to it.
+
+Pause and rewind: "pause the TV" is `pauseLive`, "go back a minute" is
+`seekLive -60`, "back to live" is `goLive`. They work only while the user's
+setting is on (`recordingSettings`' `pauseAndRewind`: 5 or 30 minutes) and a
+live channel is on the TV; otherwise they say why. Don't turn it on unless
+the user asks.
+
+`recordingSettings` says where recordings go. `setRecordingSettings` changes
+it when the user asks: `"place": "videos"` (an Uber TV Recordings folder in
+their Videos folder), a folder's full path, or `"drive:<device>"` for a USB
+drive that's already opened (`recordingDrives`; the user opens one in
+Settings → Recordings). The guide checks a place before using it: hidden,
+system, temporary and Uber TV's own folders are refused. Delete recordings
+(`removeRecording`) only when the user asks.
+
 ## Program listings
 
 IPTV channels show their shows (not one LIVE block) when there are program
@@ -492,7 +564,7 @@ sources only when the user asks; big ones (tens of MB) are fetched twice a day.
 Down the left of every screen, a way to each part. `rail` shows its items;
 `setRail` sets which are on and their order, and when it shows. An item whose
 part is turned off (Home, when the Home screen is off; My Videos, when it's
-off; Apps, while apps are off) stays off the rail until the part is on again, without changing the
+off; Apps, while apps are off; Recordings, while it's off and there are none) stays off the rail until the part is on again, without changing the
 user's choice. The user does the same with C on the open rail, or in Settings.
 
 ## Apps
@@ -969,7 +1041,7 @@ everything again.
 ## Rules
 
 - Change only what the user asked for. Ask before removing channels or themes
-  (`removeChannels`, `removeTheme`) or listings (`removeListings`), and before `resetColors` or `reset`
+  (`removeChannels`, `removeTheme`), listings (`removeListings`) or recordings (`removeRecording`), and before `resetColors` or `reset`
   unless the user asked for it. After a reset, say `reset undo` brings it back.
 - `open`, `watch` and `multiview` put the guide over the user's whole screen. Use them when
   the user wants to look, or briefly to take a snapshot, and say how to close

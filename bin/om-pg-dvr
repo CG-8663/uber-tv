@@ -1,0 +1,2325 @@
+#!/usr/bin/python3
+"""The guide's recorder (DVR): records channels to disk, on this computer.
+
+    om-pg-dvr drives              removable drives: {"drives": [{device, label, uuid, fstype, size, mount, free, ro}]}
+    om-pg-dvr check <folder>      whether a folder can hold recordings, and what it is
+    om-pg-dvr prepare <folder>    makes "Uber TV Recordings" in it, with its marker: the place to keep
+                                  (prepare <folder> make: the folder too, if it's missing and in your home folder)
+    om-pg-dvr where               a kept place (JSON on stdin), checked: {problem, path, free, size}
+    om-pg-dvr mount <device>      mounts a drive from that list (udisksctl; no password in your session)
+    om-pg-dvr start               starts a recording, its details as JSON on stdin (with "slot": a
+                                  scheduled one that's due, claimed: it starts once, whoever asks)
+    om-pg-dvr schedule            schedules shows ({"slots": [...]} on stdin): each one Scheduled, or a
+                                  Conflict when as many as may record at once would be recording then
+    om-pg-dvr series add          a series rule (channel and title, JSON on stdin): Record every episode
+    om-pg-dvr series remove <id>  stops recording a series: its rule, and its shows not started yet
+    om-pg-dvr cancel <id>         cancels a scheduled one (an episode of a series isn't scheduled again)
+    om-pg-dvr limit <1-4>         how many may record at once (2 unless you say): one past it doesn't
+                                  start, a scheduled one past it is a Conflict; one running goes on
+    om-pg-dvr clear               takes every scheduled one off the list (Recordings turned off): the
+                                  series rules stay, and schedule again once it's back on
+    om-pg-dvr follow              a running recording's channel at a new address (JSON on stdin: a playlist
+                                  that turned its links): it moves to it, the same file going on
+    om-pg-dvr tag                 a show joined to the recording running on its channel (JSON on stdin:
+                                  Record every episode on a show that's recording already): its stop moved
+                                  to the show's end, its title, episode and series kept with it
+    om-pg-dvr stop <id>           stops one (what's recorded is kept)
+    om-pg-dvr until <id> <time>   changes when one stops (Unix seconds)
+    om-pg-dvr list                every recording, scheduled ones too, and the series rules (never a stream's address)
+    om-pg-dvr remove <id>         deletes one: its file, its details file, its picture
+    om-pg-dvr run <id>            the recording itself; systemd runs it
+    om-pg-dvr buffer start        pause and rewind for the channel being watched ({"url", "minutes": 5 or 30,
+                                  "place", "keepFree", "height"} on stdin): {session, base}, once it's serving
+    om-pg-dvr buffer stop <id>    stops a session, answering once its writer is gone; its folder is deleted
+    om-pg-dvr buffer follow <id>  a session's channel at a new address (JSON on stdin), the old one closed first
+    om-pg-dvr buffer-run <id>     the session itself; systemd runs it
+
+Every answer is one line of JSON: {"ok": true, ...} or {"ok": false, "error": <code>}.
+
+A place is kept as the filesystem it's on (its UUID, or what's mounted)
+plus the "Uber TV Recordings" folder in it, which holds a marker file (My
+Videos skips folders with one). Before every recording, and before one
+plays, the place is checked again: the same filesystem, mounted where it
+was, the folder really a folder. Anything else is "drive", and nothing is
+written: a drive that's gone never sends a recording to the computer's own
+disk.
+
+A show scheduled for later waits in the state as Scheduled (or as a
+Conflict, naming the others, when as many as may record at once would
+already be recording then: the ones scheduled first keep their place). The guide's checker starts it when
+it's due, with its channel's address looked up then (never kept with the
+schedule); one the guide never got to (logged out, asleep, off) is Missed. Folders that are hidden, Uber TV's or your settings' own, the
+system's, or in memory (tmpfs and the like) are refused.
+
+Each recording is its own systemd user service (uber-tv-rec-<id>), so it
+goes on with Uber TV closed and through a restart of the shell, while you
+stay logged in. It holds a sleep inhibitor while it runs ("Recording TV"),
+stops at its stop time (12 hours at most), stops early when the disk would
+get fuller than the free space you keep, and says how it went in an Omarchy
+notification. IPTV and YouTube live are copied as they come, never
+converted, into MPEG-TS (a file cut short still plays), through a relay on
+127.0.0.1 (lib/dvrproxy.py), so a stream's address, which can hold a
+provider's login, is never on a command line; ffmpeg may follow http and
+https only. A scheduled YouTube channel's show is a video: it's saved
+whole, by yt-dlp, as .mkv. yt-dlp never reads your config or plugins.
+
+Pause and rewind keeps the last 5 or 30 minutes of the channel being watched
+in a folder at the recordings place (.uber-tv-buffer/<session>, yours alone
+where the drive allows), each session its own systemd user service
+(uber-tv-buf-<id>). It copies through the same relay, writes through the
+folder's descriptor (a drive that's gone fails, never sends it to the
+computer's own disk), stops before the drive gets fuller than you keep, and
+serves the guide's player on 127.0.0.1 under a secret path
+(lib/dvrbuffer.py). The guide asking for its status is its lease: without
+it for 20 seconds (the shell gone), the session stops and deletes its folder.
+
+The state (what's recording, what's been recorded and where) is
+~/.config/om-pg/dvr/state.json, yours alone, changed only under its lock
+file. A stream's address is kept there only while its recording runs. The
+details file next to each recording has what's shown on its card and a
+SHA-256 of its channel's address (for the channel lock), never the address.
+"""
+
+import contextlib
+import errno
+import fcntl
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import secrets
+import signal
+import stat
+import subprocess
+import sys
+import threading
+import time
+from importlib.machinery import SourceFileLoader
+
+HERE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+FFMPEG = "/usr/bin/ffmpeg"
+FFPROBE = "/usr/bin/ffprobe"
+THUMBNAILER = "/usr/bin/ffmpegthumbnailer"
+YTDLP = "/usr/bin/yt-dlp"
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+SYSTEMCTL = "/usr/bin/systemctl"
+INHIBIT = "/usr/bin/systemd-inhibit"
+SLEEP = "/usr/bin/sleep"
+NOTIFY = "/usr/bin/notify-send"
+LSBLK = "/usr/bin/lsblk"
+UDISKSCTL = "/usr/bin/udisksctl"
+PYTHON = "/usr/bin/python3"
+
+ROOT_NAME = "Uber TV Recordings"
+MARKER = ".uber-tv-recordings"
+UNIT = "uber-tv-rec-"
+ACTIVE = ("starting", "recording")
+WAITING = ("scheduled", "conflict")   # not started: a schedule, or one that won't fit
+KINDS = ("iptv", "youtube-live", "youtube-video")
+QUALITIES = (1080, 720, 480)
+MAX_HOURS = 12
+AT_ONCE = (1, 2, 3, 4)             # how many may record at once (the guide's setting; 2 unless it says)
+MAX_RECORDINGS = 5000
+MAX_RULES = 200
+MAX_SKIP = 200                     # a series' episodes you cancelled, so it doesn't schedule them again
+MIN_SHOW = 300                     # the shortest show that's scheduled or joined: 5 minutes
+MAX_IDS = 160                      # the shows one recording can hold: 12 hours of shows of 5 minutes or more
+MAX_RULES_HELD = 160               # the series they can be of (one each)
+MAX_AHEAD = 8 * 86400              # how far ahead a show can be scheduled
+STATE_MAX = 4 * 1024 * 1024
+SIZE_MAX = 64 * 1024 ** 3          # one recording
+MARGIN = 1024 ** 3                 # free space on top of what you keep, to start one
+GiB = 1024 ** 3
+ID_RE = re.compile(r"^[0-9a-f]{16}\Z")
+VIDEO_RE = re.compile(r"^[A-Za-z0-9_-]{11}\Z")
+HASH_RE = re.compile(r"^[0-9a-f]{64}\Z")
+PROVIDER_RE = re.compile(r"^(src:[0-9a-f]{12}|host:[a-z0-9.-]{1,253})\Z")
+VOLATILE = {"tmpfs", "ramfs", "devtmpfs", "proc", "sysfs", "cgroup", "cgroup2", "securityfs", "debugfs", "tracefs",
+            "configfs", "devpts", "mqueue", "hugetlbfs", "pstore", "bpf", "efivarfs", "fusectl", "binfmt_misc",
+            "autofs", "rpc_pipefs", "nsfs", "overlay", "squashfs"}
+TEMPORARY = ("/tmp", "/run", "/dev", "/proc", "/sys", "/dev/shm")
+SYSTEM = ("/boot", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/srv", "/var/lib", "/var/cache", "/var/log", "/root")
+PUBLIC = ("id", "kind", "state", "reason", "title", "titles", "desc", "category", "channel", "created", "started",
+          "finished", "end", "bytes", "duration", "thumb", "file", "private", "video", "sleepUnprotected", "provider",
+          "start", "show", "sub", "ep", "rule", "others", "ids", "rules")
+
+
+def say(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def xdg(var, rel):
+    v = os.environ.get(var, "")
+    return v if v.startswith("/") else os.path.join(os.path.expanduser("~"), rel)
+
+
+def config_home():
+    return xdg("XDG_CONFIG_HOME", ".config")
+
+
+def cache_home():
+    return xdg("XDG_CACHE_HOME", ".cache")
+
+
+def state_dir():
+    return os.path.join(config_home(), "om-pg", "dvr")
+
+
+def thumbs_dir():
+    # their own folder: My Videos clears pictures in its own that aren't its videos'
+    return os.path.join(cache_home(), "om-pg", "recordings")
+
+
+def lib_module(name):
+    """lib/<name>.py, by its path (never from sys.path)"""
+    path = os.path.join(HERE, "lib", name + ".py")
+    loader = SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_file_location(name, path, loader=loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def relay_module():
+    return lib_module("dvrproxy")
+
+
+def buffer_module():
+    return lib_module("dvrbuffer")
+
+
+# ---- places ----
+
+TEMP_MSG = "temporary"
+
+
+def unescape(s):
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), s)
+
+
+def mounts(text=None):
+    if text is None:
+        with open("/proc/self/mountinfo") as f:
+            text = f.read()
+    out = []
+    for line in text.splitlines():
+        left, _, right = line.partition(" - ")
+        f, r = left.split(), right.split()
+        if len(f) < 6 or len(r) < 2:
+            continue
+        out.append({"mount": unescape(f[4]), "fstype": r[0], "source": unescape(r[1]), "ro": "ro" in f[5].split(",")})
+    return out
+
+
+def mount_of(path, table):
+    best = None
+    for m in table:
+        mp = m["mount"]
+        if path == mp or path.startswith(mp.rstrip("/") + "/"):
+            if best is None or len(mp) >= len(best["mount"]):
+                best = m   # the later of two at one place is the one on top
+    return best
+
+
+def volume_of(m, by_uuid=None):
+    src = m["source"]
+    if src.startswith("/dev/"):
+        real = os.path.realpath(src)
+        if by_uuid is None:
+            by_uuid = {}
+            with contextlib.suppress(OSError):
+                for name in os.listdir("/dev/disk/by-uuid"):
+                    by_uuid[os.path.realpath(os.path.join("/dev/disk/by-uuid", name))] = name
+        if real in by_uuid:
+            return "uuid:" + by_uuid[real]
+        return "dev:" + real
+    return "src:" + m["fstype"] + ":" + src
+
+
+def under(path, top):
+    return path == top or path.startswith(top.rstrip("/") + "/")
+
+
+def lsblk_nodes():
+    try:
+        out = subprocess.run([LSBLK, "-J", "-b", "-o", "NAME,PATH,TYPE,FSTYPE,UUID,LABEL,SIZE,MOUNTPOINTS,RM,HOTPLUG,RO"],
+                             capture_output=True, text=True, timeout=10).stdout
+        tree = json.loads(out).get("blockdevices", [])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    flat = []
+
+    def yes(v):
+        return v is True or v == "1" or v == 1
+
+    def walk(nodes, removable):
+        for n in nodes if isinstance(nodes, list) else []:
+            if not isinstance(n, dict):
+                continue
+            rem = removable or yes(n.get("rm")) or yes(n.get("hotplug"))
+            flat.append(dict(n, removable=rem))
+            walk(n.get("children"), rem)
+    walk(tree, False)
+    return flat
+
+
+def check_place(folder, table=None, home=None, own=None):
+    """What a folder is, or {"error": code}: missing, relative, hidden, own, system, temporary, readonly"""
+    raw = os.path.expanduser(str(folder or ""))
+    if not os.path.isabs(raw):
+        return {"error": "relative"}
+    p = os.path.realpath(raw)
+    if not os.path.isdir(p):
+        return {"error": "missing"}
+    home = os.path.realpath(home or os.path.expanduser("~"))
+    if any(c.startswith(".") for c in p.split("/") if c):
+        return {"error": "hidden"}
+    own = own if own is not None else [config_home(), cache_home(), os.path.join(home, ".local"), HERE]
+    if any(under(p, os.path.realpath(d)) for d in own):
+        return {"error": "own"}
+    if any(under(p, t) for t in TEMPORARY):
+        return {"error": "temporary"}
+    if p == "/" or any(under(p, s) for s in SYSTEM):
+        return {"error": "system"}
+    table = table if table is not None else mounts()
+    m = mount_of(p, table)
+    if not m:
+        return {"error": "missing"}
+    if m["fstype"] in VOLATILE:
+        return {"error": "temporary"}
+    if m["ro"] or not os.access(p, os.W_OK | os.X_OK):
+        return {"error": "readonly"}
+    home_mount = mount_of(home, table)
+    system = bool(home_mount) and volume_of(home_mount) == volume_of(m)
+    return {"path": p, "mount": m["mount"], "fstype": m["fstype"], "volume": volume_of(m), "system": system}
+
+
+def drive_facts(m):
+    """A mount's label and whether it's a removable drive"""
+    real = os.path.realpath(m["source"]) if m["source"].startswith("/dev/") else ""
+    for n in lsblk_nodes() if real else []:
+        if n.get("path") and os.path.realpath(n["path"]) == real:
+            return n.get("label") or "", n.get("removable", False)
+    return "", False
+
+
+def free_of(path):
+    try:
+        s = os.statvfs(path)
+        return s.f_bavail * s.f_frsize
+    except OSError:
+        return 0
+
+
+def prepare(folder, make=False):
+    raw = os.path.expanduser(str(folder or ""))
+    if make and os.path.isabs(raw) and not os.path.lexists(raw) \
+            and os.path.dirname(os.path.normpath(raw)) == os.path.realpath(os.path.expanduser("~")):
+        with contextlib.suppress(OSError):
+            os.mkdir(raw, 0o755)   # your Videos folder, the first time
+    c = check_place(folder)
+    if "error" in c:
+        return {"ok": False, "error": c["error"]}
+    p = c["path"]
+    root = p if os.path.basename(p) == ROOT_NAME else os.path.join(p, ROOT_NAME)
+    pfd = os.open(os.path.dirname(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(os.path.basename(root), 0o700, dir_fd=pfd)
+        st = os.lstat(os.path.basename(root), dir_fd=pfd)
+        if not stat.S_ISDIR(st.st_mode):
+            return {"ok": False, "error": "missing"}
+        rfd = os.open(os.path.basename(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pfd)
+    finally:
+        os.close(pfd)
+    try:
+        with contextlib.suppress(OSError):
+            os.fchmod(rfd, 0o700)
+        private = stat.S_IMODE(os.fstat(rfd).st_mode) & 0o077 == 0
+        try:
+            mfd = os.open(MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=rfd)
+            os.write(mfd, b'{"uberTV": "recordings"}\n')
+            os.close(mfd)
+        except FileExistsError:
+            if not stat.S_ISREG(os.lstat(MARKER, dir_fd=rfd).st_mode):
+                return {"ok": False, "error": "missing"}
+    finally:
+        os.close(rfd)
+    m = {"mount": c["mount"], "source": "", "fstype": c["fstype"]}
+    for t in mounts():
+        if t["mount"] == c["mount"]:
+            m = t
+    label, removable = drive_facts(m)
+    place = {"volume": c["volume"], "mount": c["mount"], "rel": os.path.relpath(root, c["mount"]), "fstype": c["fstype"],
+             "label": label, "removable": removable, "system": c["system"]}
+    return {"ok": True, "place": place, "path": root, "private": private, "free": free_of(root), "size": size_of(root), "system": c["system"]}
+
+
+def size_of(path):
+    try:
+        s = os.statvfs(path)
+        return s.f_blocks * s.f_frsize
+    except OSError:
+        return 0
+
+
+def where(place):
+    root, problem = verify(place)
+    system = isinstance(place, dict) and place.get("system") is True
+    if not root:
+        return {"ok": True, "problem": problem or "drive", "path": "", "free": 0, "size": 0, "system": system}
+    return {"ok": True, "problem": problem, "path": root, "free": free_of(root), "size": size_of(root), "system": system}
+
+
+def verify(place, table=None):
+    """(the place's folder, problem): problem "" (fine), "readonly" (can play, not record) or "drive" """
+    if not isinstance(place, dict) or not all(isinstance(place.get(k), str) for k in ("volume", "mount", "rel")):
+        return None, "drive"
+    mount = place["mount"]
+    root = os.path.normpath(os.path.join(mount, place["rel"]))
+    if not mount.startswith("/") or not under(root, mount) or root == mount:
+        return None, "drive"
+    table = table if table is not None else mounts()
+    m = mount_of(root, table)
+    if not m or m["mount"] != mount or volume_of(m) != place["volume"] or m["fstype"] in VOLATILE:
+        return None, "drive"
+    try:
+        if os.path.realpath(root) != root or not stat.S_ISDIR(os.lstat(root).st_mode) \
+                or not stat.S_ISREG(os.lstat(os.path.join(root, MARKER)).st_mode):
+            return None, "drive"
+    except OSError:
+        return None, "drive"
+    if m["ro"] or not os.access(root, os.W_OK | os.X_OK):
+        return root, "readonly"
+    return root, ""
+
+
+def drives():
+    out = []
+    for n in lsblk_nodes():
+        if not n.get("removable") or not n.get("fstype") or n.get("fstype") in ("swap", "crypto_LUKS", "LVM2_member"):
+            continue
+        try:
+            size = int(n.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size <= 0:
+            continue   # an empty card reader
+        points = [p for p in (n.get("mountpoints") or []) if isinstance(p, str) and p.startswith("/")]
+        mount = points[0] if points else ""
+        out.append({"device": n.get("path") or "", "label": n.get("label") or "", "uuid": n.get("uuid") or "",
+                    "fstype": n.get("fstype"), "size": size, "mount": mount, "free": free_of(mount) if mount else 0,
+                    "ro": n.get("ro") is True or n.get("ro") == "1"})
+    return out
+
+
+def mount_drive(device):
+    d = next((d for d in drives() if d["device"] == device), None)
+    if not d:
+        return {"ok": False, "error": "drive"}
+    if d["mount"]:
+        return {"ok": True, "mount": d["mount"]}
+    try:
+        r = subprocess.run([UDISKSCTL, "mount", "--no-user-interaction", "-b", device], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"ok": False, "error": "mount"}
+    m = re.search(r" at (/.*?)\.?\s*$", r.stdout.strip())
+    if r.returncode != 0 or not m:
+        return {"ok": False, "error": "mount"}
+    return {"ok": True, "mount": m.group(1)}
+
+
+# ---- the state ----
+
+def ensure_state_dir():
+    d = state_dir()
+    os.makedirs(os.path.dirname(d), mode=0o700, exist_ok=True)
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(d, 0o700)
+    st = os.lstat(d)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        raise OSError(errno.ENOTDIR, "the DVR's folder isn't a folder of yours")
+    return d
+
+
+@contextlib.contextmanager
+def locked():
+    d = ensure_state_dir()
+    fd = os.open(os.path.join(d, "lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def load():
+    path = os.path.join(state_dir(), "state.json")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return {"version": 1, "recordings": {}, "rules": {}}
+    with os.fdopen(fd, "rb") as f:
+        data = f.read(STATE_MAX + 1)
+    try:
+        st = json.loads(data) if len(data) <= STATE_MAX else None
+    except ValueError:
+        st = None
+    if not isinstance(st, dict) or not isinstance(st.get("recordings"), dict):
+        # unreadable: kept aside (never overwritten), and a fresh start
+        with contextlib.suppress(OSError):
+            os.rename(path, path + ".bad-" + str(int(time.time())))
+        return {"version": 1, "recordings": {}, "rules": {}}
+    st["recordings"] = {k: v for k, v in st["recordings"].items() if ID_RE.match(str(k)) and isinstance(v, dict)}
+    rules = st.get("rules") if isinstance(st.get("rules"), dict) else {}
+    st["rules"] = {k: v for k, v in rules.items() if ID_RE.match(str(k)) and isinstance(v, dict)}
+    return st
+
+
+def save(st):
+    data = json.dumps(st).encode()
+    if len(data) > STATE_MAX:
+        raise OSError(errno.EFBIG, "too many recordings")
+    d = state_dir()
+    tmp = os.path.join(d, "state.json.tmp-" + secrets.token_hex(6))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, os.path.join(d, "state.json"))
+
+
+def unit_active(rid):
+    try:
+        return subprocess.run([SYSTEMCTL, "--user", "is-active", "--quiet", UNIT + rid], timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return True   # can't tell: leave it
+
+
+def reconcile(st, now=None, missed=None):
+    """A recording whose worker is gone (killed, the computer off) ends as
+    what's on disk says: incomplete if anything was recorded, else failed.
+    A scheduled one whose time has gone by without the guide starting it
+    (logged out, asleep, off) is Missed (added to missed, to be said)"""
+    now = now or time.time()
+    changed = False
+    for rid, r in st["recordings"].items():
+        if r.get("state") == "scheduled" and int(r.get("end") or 0) <= now:
+            r.update(state="missed", reason="notRunning", finished=int(now))
+            if missed is not None:
+                missed.append(r)
+            changed = True
+            continue
+        if r.get("state") not in ACTIVE:
+            continue
+        beat = r.get("beat") or r.get("created") or 0
+        if now - beat < 60 or unit_active(rid):
+            continue
+        root, problem = verify(r.get("place"))
+        size = 0
+        if root and problem != "drive":
+            size = settle(root, r)
+        r.pop("source", None)
+        r.pop("handoff", None)
+        r["state"] = "incomplete" if size else "failed"
+        r["reason"] = "stopped" if size else (r.get("reason") or "stopped")
+        r["finished"] = now
+        changed = True
+    return changed
+
+
+def settle(root, r):
+    """The worker's file put in its place, if the worker couldn't (bytes in it)"""
+    name = r.get("file") or ""
+    if not safe_name(name):
+        return 0
+    part = part_name(name)
+    try:
+        dfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return 0
+    try:
+        try:
+            st = os.lstat(part, dir_fd=dfd)
+        except FileNotFoundError:
+            try:
+                return os.lstat(name, dir_fd=dfd).st_size
+            except OSError:
+                return 0
+        if not stat.S_ISREG(st.st_mode) or st.st_size == 0:
+            with contextlib.suppress(OSError):
+                os.unlink(part, dir_fd=dfd)
+            return 0
+        place_file(dfd, part, name)
+        return st.st_size
+    finally:
+        os.close(dfd)
+
+
+# ---- names ----
+
+def clean(text, limit=90):
+    s = re.sub(r'[\x00-\x1f\x7f/\\:*?"<>|]+', " ", str(text or ""))
+    s = re.sub(r"\s+", " ", s).strip().lstrip(".").strip()
+    b = s.encode()[:limit * 2]
+    s = b.decode("utf-8", "ignore")[:limit].strip()
+    return s
+
+
+def safe_name(name):
+    return isinstance(name, str) and 0 < len(name) <= 255 and "/" not in name and "\x00" not in name \
+        and not name.startswith(".") and name not in (".", "..")
+
+
+def part_name(name):
+    base, ext = os.path.splitext(name)
+    return base + ".part" + ext
+
+
+def file_name(title, channel, when, ext, taken):
+    stamp = time.strftime("%Y-%m-%d %H.%M", time.localtime(when))
+    parts = [p for p in (clean(title), clean(channel, 60)) if p]
+    if len(parts) == 2 and parts[0] == parts[1]:
+        parts = parts[:1]
+    base = " – ".join(parts + [stamp]) or stamp
+    name = base + ext
+    n = 2
+    while taken(name) or taken(part_name(name)):
+        name = f"{base} ({n}){ext}"
+        n += 1
+    return name
+
+
+def place_file(dfd, src, dst):
+    """src renamed to dst in one folder, never over a file already there"""
+    try:
+        os.link(src, dst, src_dir_fd=dfd, dst_dir_fd=dfd, follow_symlinks=False)
+        os.unlink(src, dir_fd=dfd)
+    except FileExistsError:
+        raise
+    except OSError:
+        # a drive without hard links (FAT, exFAT)
+        try:
+            os.lstat(dst, dir_fd=dfd)
+            raise FileExistsError(dst)
+        except FileNotFoundError:
+            os.rename(src, dst, src_dir_fd=dfd, dst_dir_fd=dfd)
+
+
+# ---- starting, stopping ----
+
+def text_of(v, limit):
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", v)[:limit] if isinstance(v, str) else ""
+
+
+def job_from(raw, now):
+    if not isinstance(raw, dict):
+        return None, "job"
+    kind = raw.get("kind")
+    if kind not in KINDS:
+        return None, "job"
+    ch = raw.get("channel") if isinstance(raw.get("channel"), dict) else {}
+    h = ch.get("hash") if isinstance(ch.get("hash"), str) and HASH_RE.match(ch.get("hash")) else ""
+    try:
+        number = int(ch.get("number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+    job = {"kind": kind, "channel": {"name": text_of(ch.get("name"), 200), "number": number, "hash": h},
+           "title": text_of(raw.get("title"), 300), "desc": text_of(raw.get("desc"), 2000),
+           "category": text_of(raw.get("category"), 100), "private": raw.get("private") is True,
+           "provider": raw.get("provider") if isinstance(raw.get("provider"), str) and PROVIDER_RE.match(raw.get("provider")) else ""}
+    q = raw.get("quality", 1080)
+    job["quality"] = q if q in QUALITIES else 1080
+    try:
+        keep = int(raw.get("keepFree", 5 * GiB))
+    except (TypeError, ValueError):
+        return None, "job"
+    job["keepFree"] = max(GiB, min(100 * GiB, keep))
+    if kind == "iptv":
+        url = raw.get("url")
+        if not isinstance(url, str) or len(url) > 4096 or not re.match(r"^https?://[^\s]+\Z", url):
+            return None, "job"
+        job["source"] = {"url": url}
+    else:
+        vid = raw.get("video")
+        if not isinstance(vid, str) or not VIDEO_RE.match(vid):
+            return None, "job"
+        job["source"] = {"video": vid}
+        job["video"] = vid
+    if kind == "youtube-video":
+        job["end"] = 0
+    else:
+        try:
+            end = int(raw.get("end"))
+        except (TypeError, ValueError):
+            return None, "job"
+        if end <= now or end > now + MAX_HOURS * 3600:
+            return None, "job"
+        job["end"] = end
+    if kind == "iptv":
+        # a listed show recorded now (a series' episode among them): its episode, its series, its times
+        job["sub"], job["ep"] = text_of(raw.get("sub"), 200), text_of(raw.get("ep"), 60)
+        job["rule"] = raw.get("rule") if isinstance(raw.get("rule"), str) and ID_RE.match(raw.get("rule")) else ""
+        show = raw.get("show") if isinstance(raw.get("show"), dict) else {}
+        try:
+            a, b = int(show.get("start")), int(show.get("end"))
+            if a < b <= a + MAX_HOURS * 3600:
+                job["show"] = {"start": a, "end": b}
+        except (TypeError, ValueError):
+            pass
+    job["place"] = raw.get("place")
+    return job, ""
+
+
+def names_of(recs):
+    return [r.get("title") or r.get("channel", {}).get("name") or "a recording" if not r.get("private") else "a recording" for r in recs]
+
+
+# ---- scheduled ----
+
+def fold(text):
+    return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+
+
+def identity(r):
+    """A show's identity on its channel: its title with its episode number,
+    else with its episode's title, else when it starts (so a series doesn't
+    record one episode twice, a rerun included; two shows' S1E2 aren't one)"""
+    if fold(r.get("ep")):
+        return "ep:" + fold(r.get("title")) + "|" + fold(r.get("ep"))
+    if fold(r.get("sub")):
+        return "sub:" + fold(r.get("title")) + "|" + fold(r.get("sub"))
+    show = r.get("show") if isinstance(r.get("show"), dict) else {}
+    return "at:%d" % int(show.get("start") or r.get("start") or 0)
+
+
+def identities(r):
+    """Every show a recording holds (episodes back to back are joined into
+    one recording): their identities"""
+    ids = [k for k in (r.get("ids") or []) if isinstance(k, str)][:MAX_IDS]
+    return ids or [identity(r)]
+
+
+def rules_of(r):
+    """Every series a recording's shows are of"""
+    held = [k for k in (r.get("rules") or []) if isinstance(k, str) and ID_RE.match(k)]
+    if r.get("rule") and r["rule"] not in held:
+        held.insert(0, r["rule"])
+    return held[:MAX_RULES_HELD]
+
+
+def merge_shows(into, r):
+    """A show joined into a running recording: its identity and its series
+    kept with it (so its rerun isn't recorded), every one a 12-hour
+    recording can hold"""
+    ids = identities(into)
+    for k in identities(r):
+        if k not in ids:
+            ids.append(k)
+    into["ids"] = ids[-MAX_IDS:]
+    held = rules_of(into)
+    for k in rules_of(r):
+        if k not in held:
+            held.append(k)
+    if held:
+        into["rules"] = held[:MAX_RULES_HELD]
+        into.setdefault("rule", held[0])
+
+
+def stream_key(r):
+    """What takes one stream: a channel (shows back to back on it are one;
+    an IPTV channel by its provider and name, as its address may turn), or a
+    video being saved, on its own"""
+    ch = r.get("channel", {})
+    if r.get("kind") == "youtube-video":
+        return r.get("id")
+    if r.get("kind") == "iptv" and r.get("provider") and fold(ch.get("name")):
+        return "ch:" + r["provider"] + "|" + fold(ch.get("name"))
+    return ch.get("hash") or r.get("id")
+
+
+def channel_of(raw):
+    ch = raw.get("channel") if isinstance(raw.get("channel"), dict) else {}
+    h = ch.get("hash") if isinstance(ch.get("hash"), str) and HASH_RE.match(ch.get("hash")) else ""
+    try:
+        number = int(ch.get("number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+    return {"name": text_of(ch.get("name"), 200), "number": number, "hash": h}
+
+
+def provider_of(raw):
+    p = raw.get("provider")
+    return p if isinstance(p, str) and PROVIDER_RE.match(p) else ""
+
+
+def slot_from(raw, now):
+    """A show to record later (IPTV, from its listings): its times and its
+    padding, checked; None if it can't be one"""
+    if not isinstance(raw, dict) or raw.get("kind") != "iptv":
+        return None
+    ch = channel_of(raw)
+    title = text_of(raw.get("title"), 300).strip()
+    if not ch["hash"] or not title:
+        return None
+    try:
+        a, b = int(raw.get("showStart")), int(raw.get("showEnd"))
+        early, late = int(raw.get("early", 60)), int(raw.get("late", 120))
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= early <= 600 and 0 <= late <= 900 and a + MIN_SHOW <= b <= a + MAX_HOURS * 3600):
+        return None
+    start, end = a - early, min(b + late, a - early + MAX_HOURS * 3600)
+    if end <= now or start > now + MAX_AHEAD:
+        return None
+    rule = raw.get("rule") if isinstance(raw.get("rule"), str) and ID_RE.match(raw.get("rule")) else ""
+    return {"kind": "iptv", "channel": ch, "title": title, "sub": text_of(raw.get("sub"), 200), "ep": text_of(raw.get("ep"), 60),
+            "desc": text_of(raw.get("desc"), 2000), "category": text_of(raw.get("category"), 100), "private": raw.get("private") is True,
+            "provider": provider_of(raw), "show": {"start": a, "end": b}, "start": start, "end": end, "rule": rule}
+
+
+def span(r, now):
+    """When one takes a stream: a waiting one its window, a running one from
+    now to its stop (a video being saved: an hour, as a guess)"""
+    if r.get("state") in WAITING:
+        return max(int(r.get("start") or 0), now), int(r.get("end") or 0)
+    return now, int(r.get("end") or 0) or now + 3600
+
+
+def cap_of(st):
+    """How many may record at once"""
+    return st.get("atOnce") if st.get("atOnce") in AT_ONCE else 2
+
+
+def recheck(st, now):
+    """Which waiting ones fit: at most cap_of(st) streams at any moment, two
+    shows back to back on one channel being one stream. The ones scheduled
+    first keep their place; a later one that would be one too many waits as
+    a Conflict, naming the others, and is Scheduled again once one goes.
+    True if anything changed"""
+    recs = st["recordings"]
+    fixed = [r for r in recs.values() if r.get("state") in ACTIVE]
+    waiting = sorted((r for r in recs.values() if r.get("state") in WAITING and int(r.get("end") or 0) > now),
+                     key=lambda r: (r.get("seq") or 0, r.get("created") or 0, r.get("id") or ""))
+    chosen = []
+    changed = False
+    for r in waiting:
+        a, b = span(r, now)
+        key = stream_key(r)
+        cover = []
+        for o in fixed + chosen:
+            oa, ob = span(o, now)
+            if oa < b and ob > a and stream_key(o) != key:
+                cover.append((oa, ob, o))
+        peak = 0
+        for t in [a] + [oa for oa, ob, o in cover if oa > a]:
+            peak = max(peak, len({stream_key(o) for oa, ob, o in cover if oa <= t < ob}))
+        was = (r.get("state"), r.get("others"))
+        if peak >= cap_of(st):
+            # the others by their ids, once a stream (never their names: a
+            # channel locked later would still be named); the guide names
+            # them as the lock is when it says so
+            streams = {}
+            for oa, ob, o in sorted(cover, key=lambda c: c[0]):
+                streams.setdefault(stream_key(o), o["id"])
+            r.update(state="conflict", reason="conflict", others=list(streams.values())[:3])
+        else:
+            r.update(state="scheduled", reason="")
+            r.pop("others", None)
+            chosen.append(r)
+        changed = changed or was != (r.get("state"), r.get("others"))
+    return changed
+
+
+def schedule(raw, now=None):
+    """Shows to record later: each Scheduled (or a Conflict); one already
+    scheduled (or, for a series, an episode already recorded) isn't added
+    twice"""
+    now = int(now or time.time())
+    items = raw.get("slots") if isinstance(raw, dict) else None
+    if not isinstance(items, list) or not items or len(items) > 100:
+        return {"ok": False, "error": "job"}
+    with locked():
+        st = load()
+        reconcile(st, now)
+        recs = st["recordings"]
+        out = []
+        for item in items:
+            slot = slot_from(item, now)
+            if not slot:
+                out.append({"ok": False, "error": "job"})
+                continue
+            h, key = slot["channel"]["hash"], identity(slot)
+            if slot["rule"]:
+                rule = st["rules"].get(slot["rule"])
+                if not rule:
+                    out.append({"ok": False, "error": "rule"})   # the series was stopped meanwhile
+                    continue
+                if key in rule.get("skip", []):
+                    out.append({"ok": True, "skipped": True})
+                    continue
+                # by its series (its channel's address may have changed since) or its channel, every show a recording holds
+                dup = next((r for r in recs.values() if (r.get("channel", {}).get("hash") == h or slot["rule"] in rules_of(r))
+                            and r.get("state") not in ("failed", "missed") and not (r.get("state") == "conflict" and int(r.get("end") or 0) <= now)
+                            and key in identities(r)), None)
+            else:
+                dup = next((r for r in recs.values() if r.get("channel", {}).get("hash") == h and r.get("state") in WAITING + ACTIVE
+                            and (r.get("show") or {}).get("start") == slot["show"]["start"]), None)
+            if dup:
+                out.append({"ok": True, "id": dup["id"], "already": True})
+                continue
+            if len(recs) >= MAX_RECORDINGS:
+                out.append({"ok": False, "error": "full"})
+                continue
+            rid = secrets.token_hex(8)
+            st["seq"] = int(st.get("seq") or 0) + 1   # the order they were scheduled in (who keeps their place)
+            recs[rid] = dict(slot, id=rid, state="scheduled", reason="", created=now, seq=st["seq"], titles=[slot["title"]], bytes=0, ids=[key])
+            out.append({"ok": True, "id": rid})
+        recheck(st, now)
+        save(st)
+        for o in out:
+            r = recs.get(o.get("id") or "")
+            if r:
+                o.update(state=r["state"], others=r.get("others", []))
+    return {"ok": True, "slots": out}
+
+
+def limit(n, now=None):
+    """How many may record at once, from the guide's setting: one running
+    goes on; the scheduled ones are checked again against it"""
+    now = int(now or time.time())
+    if n not in AT_ONCE:
+        return {"ok": False, "error": "job"}
+    with locked():
+        st = load()
+        st["atOnce"] = n
+        recheck(st, now)
+        save(st)
+    return {"ok": True, "atOnce": n}
+
+
+def tag(raw, now=None):
+    """Record every episode on a show that's recording already: the show
+    joined to that recording, in one go: its stop moved to the show's end
+    (plus late, within its 12 hours), its title, episode and series kept with
+    it. One that's ended ("ended") or can't run that long ("long") isn't
+    tagged: the guide records the show itself"""
+    now = int(now or time.time())
+    if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not ID_RE.match(raw["id"]):
+        return {"ok": False, "error": "job"}
+    rule = raw.get("rule") if isinstance(raw.get("rule"), str) and ID_RE.match(raw.get("rule")) else ""
+    show = raw.get("show") if isinstance(raw.get("show"), dict) else {}
+    try:
+        a, b = int(show.get("start")), int(show.get("end"))
+        late = int(raw.get("late", 120))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "job"}
+    if not (a + MIN_SHOW <= b <= a + MAX_HOURS * 3600 and 0 <= late <= 900 and b > now):
+        return {"ok": False, "error": "job"}
+    url = raw.get("url")
+    if url is not None and (not isinstance(url, str) or len(url) > 4096 or not re.match(r"^https?://[^\s]+\Z", url)):
+        return {"ok": False, "error": "job"}
+    one = {"title": text_of(raw.get("title"), 300), "sub": text_of(raw.get("sub"), 200), "ep": text_of(raw.get("ep"), 60),
+           "show": {"start": a, "end": b}, "rule": rule}
+    with locked():
+        st = load()
+        r = st["recordings"].get(raw["id"])
+        if not r:
+            return {"ok": False, "error": "unknown"}
+        if r.get("state") not in ACTIVE or r.get("stop"):
+            return {"ok": False, "error": "ended"}
+        if rule and rule not in st["rules"]:
+            return {"ok": False, "error": "rule"}
+        follow(r, url)                         # its channel's address as the guide has it now
+        latest = latest_of(r, now)
+        if one["title"] and one["title"] not in r.get("titles", []):
+            r["titles"] = (r.get("titles") or [])[:4] + [one["title"]]
+        if b + late <= latest:
+            r["end"] = max(int(r.get("end") or 0), b + late)
+            merge_shows(r, one)
+            save(st)
+            return {"ok": True, "id": r["id"], "end": r["end"]}
+        # past its 12 hours: it records to its end, and a continuation from
+        # there holds the show (its worker starts it at once then)
+        if len(st["recordings"]) >= MAX_RECORDINGS:
+            return {"ok": False, "error": "full"}
+        cid = continuation(st, r, one, b + late, now)
+        save(st)
+        return {"ok": True, "id": r["id"], "end": r["end"], "continued": cid}
+
+
+def follow_cmd(raw):
+    """A running recording's channel at a new address (the guide saw its
+    playlist turn the link): it moves to it, the same file going on"""
+    if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not ID_RE.match(raw["id"]):
+        return {"ok": False, "error": "job"}
+    url = raw.get("url")
+    if not isinstance(url, str) or len(url) > 4096 or not re.match(r"^https?://[^\s]+\Z", url):
+        return {"ok": False, "error": "job"}
+    with locked():
+        st = load()
+        r = st["recordings"].get(raw["id"])
+        if not r or r.get("state") not in ACTIVE or r.get("kind") != "iptv":
+            return {"ok": False, "error": "notRecording"}
+        follow(r, url)
+        save(st)
+    return {"ok": True}
+
+
+def clear(now=None):
+    """Recordings turned off: every scheduled one off the list, at once (the
+    series rules stay, and schedule again once it's back on)"""
+    now = int(now or time.time())
+    with locked():
+        st = load()
+        recs = st["recordings"]
+        gone = [k for k, r in recs.items() if r.get("state") in WAITING]
+        for k in gone:
+            del recs[k]
+        save(st)
+    return {"ok": True, "cleared": len(gone)}
+
+
+def series_add(raw, now=None):
+    """Record every episode: a rule, a channel and a title (the guide
+    schedules its episodes as its listings come)"""
+    now = int(now or time.time())
+    if not isinstance(raw, dict):
+        return {"ok": False, "error": "job"}
+    ch, title = channel_of(raw), text_of(raw.get("title"), 300).strip()
+    if not ch["hash"] or not title:
+        return {"ok": False, "error": "job"}
+    with locked():
+        st = load()
+        rules = st["rules"]
+        provider = provider_of(raw)
+        # the same series: its channel by its address, or (its address
+        # changed since: a playlist that turns its links) by its name from the
+        # same provider, its address then brought up to date
+        had = next((x for x in rules.values() if fold(x.get("title")) == fold(title) and (x.get("channel", {}).get("hash") == ch["hash"]
+                    or (provider and x.get("provider") == provider and fold(x.get("channel", {}).get("name")) == fold(ch["name"])))), None)
+        if had:
+            if had.get("channel", {}).get("hash") != ch["hash"]:
+                had["channel"] = ch
+                save(st)
+            return {"ok": True, "id": had["id"], "already": True}
+        if len(rules) >= MAX_RULES:
+            return {"ok": False, "error": "full"}
+        rid = secrets.token_hex(8)
+        rules[rid] = {"id": rid, "channel": ch, "title": title, "provider": provider, "private": raw.get("private") is True,
+                      "created": now, "skip": []}
+        save(st)
+    return {"ok": True, "id": rid}
+
+
+def series_remove(rid, now=None):
+    """Stops recording a series: its rule, and its shows not started yet
+    (what it recorded stays)"""
+    now = int(now or time.time())
+    with locked():
+        st = load()
+        if rid not in st["rules"]:
+            return {"ok": False, "error": "unknown"}
+        del st["rules"][rid]
+        recs = st["recordings"]
+        gone = [k for k, r in recs.items() if r.get("rule") == rid and r.get("state") in WAITING]
+        for k in gone:
+            del recs[k]
+        recheck(st, now)
+        save(st)
+    return {"ok": True, "cancelled": len(gone)}
+
+
+def cancel(rid, now=None):
+    """A scheduled one cancelled (a series' episode isn't scheduled again);
+    a missed one taken off the list; a running one stops"""
+    now = int(now or time.time())
+    with locked():
+        st = load()
+        recs = st["recordings"]
+        r = recs.get(rid)
+        if not r:
+            return {"ok": False, "error": "unknown"}
+        if r.get("state") in ACTIVE:
+            r["stop"] = True
+            save(st)
+            return {"ok": True, "stopping": True}
+        if r.get("state") not in WAITING + ("missed",):
+            return {"ok": False, "error": "notScheduled"}
+        rule = st["rules"].get(r.get("rule") or "")
+        if rule and r.get("state") in WAITING:
+            key = identity(r)
+            rule["skip"] = ([k for k in rule.get("skip", []) if k != key] + [key])[-MAX_SKIP:]
+        del recs[rid]
+        recheck(st, now)
+        save(st)
+    return {"ok": True}
+
+
+def start(raw, now=None):
+    now = int(now or time.time())
+    if isinstance(raw, dict) and "slot" in raw:
+        return claim(raw, now)
+    job, bad = job_from(raw, now)
+    if bad:
+        return {"ok": False, "error": bad}
+    with locked():
+        st = load()
+        if reconcile(st, now):
+            save(st)
+        recs = st["recordings"]
+        active = [r for r in recs.values() if r.get("state") in ACTIVE]
+        if job["kind"] != "youtube-video" and job["channel"]["hash"]:
+            # the same stream: its channel's address hashed, or (IPTV) its provider and name, as its address may have turned
+            same = [r for r in active if r.get("kind") == job["kind"] and (r.get("channel", {}).get("hash") == job["channel"]["hash"]
+                                                                          or (job["kind"] == "iptv" and stream_key(r) == stream_key(job)))]
+            if same:
+                # back to back on one channel: one recording, its stop later (one stream)
+                r = same[0]
+                if job["kind"] == "iptv":
+                    follow(r, job["source"]["url"])   # the address as the guide has it now
+                if job["title"] and job["title"] not in r.get("titles", []):
+                    r["titles"] = (r.get("titles") or [])[:4] + [job["title"]]
+                if job["end"] > latest_of(r, now) and job["kind"] == "iptv":
+                    # past its 12 hours: a continuation from its end holds the show
+                    if len(recs) >= MAX_RECORDINGS:
+                        return {"ok": False, "error": "full"}
+                    cid = continuation(st, r, job, job["end"], now)
+                    save(st)
+                    return {"ok": True, "id": r["id"], "joined": True, "end": r["end"], "continued": cid}
+                r["end"] = min(max(r.get("end", 0), job["end"]), latest_of(r, now))
+                if job.get("show"):
+                    merge_shows(r, job)
+                save(st)
+                return {"ok": True, "id": r["id"], "joined": True, "end": r["end"]}
+        if job["kind"] == "youtube-video":
+            had = next((r for r in recs.values() if r.get("video") == job["video"] and r.get("kind") == "youtube-video"
+                        and r.get("state") in ACTIVE + ("done",)), None)
+            if had:
+                return {"ok": True, "id": had["id"], "already": True}
+        if len(active) >= cap_of(st):
+            return {"ok": False, "error": "cap", "recording": names_of(active)}
+        if len(recs) >= MAX_RECORDINGS:
+            return {"ok": False, "error": "full"}
+        root, problem = verify(job["place"])
+        if problem:
+            return {"ok": False, "error": problem}
+        free = free_of(root)
+        if free < job["keepFree"] + MARGIN:
+            return {"ok": False, "error": "space", "free": free}
+        rid = secrets.token_hex(8)
+        ext = ".mkv" if job["kind"] == "youtube-video" else ".ts"
+        name = file_name(job["title"] or job["channel"]["name"], job["channel"]["name"], now, ext,
+                         lambda n: os.path.lexists(os.path.join(root, n)) or any(r.get("file") == n for r in recs.values()))
+        entry = dict(job, id=rid, state="starting", reason="", created=now, start=now, file=name,
+                     titles=[job["title"]] if job["title"] else [], bytes=0)
+        if job.get("show"):
+            entry["ids"] = [identity(job)]
+        recs[rid] = entry
+        save(st)
+    return launch(rid, job["end"])
+
+
+def claim(raw, now):
+    """A scheduled one that's due, started: claimed under the lock (only a
+    Scheduled one starts, and once), with its channel's address as the guide
+    has it now ("gone": it hasn't); its title and times are the schedule's.
+    Joins a recording already on that channel (back to back: one stream)"""
+    rid = raw.get("slot")
+    if not isinstance(rid, str) or not ID_RE.match(rid):
+        return {"ok": False, "error": "job"}
+    gone = raw.get("gone") is True
+    url = raw.get("url")
+    if not gone and (not isinstance(url, str) or len(url) > 4096 or not re.match(r"^https?://[^\s]+\Z", url)):
+        return {"ok": False, "error": "job"}
+    q = raw.get("quality", 1080)
+    q = q if q in QUALITIES else 1080
+    try:
+        keep = max(GiB, min(100 * GiB, int(raw.get("keepFree", 5 * GiB))))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "job"}
+    said, missed, result = None, [], None
+    with locked():
+        st = load()
+        reconcile(st, now, missed)
+        recs = st["recordings"]
+        r = recs.get(rid)
+        if not r or r.get("state") != "scheduled":
+            result = {"ok": False, "error": "notScheduled", "state": (r or {}).get("state", "")}
+        elif now < int(r.get("start") or 0) - 60:
+            result = {"ok": False, "error": "early"}
+        elif (recs.get(r.get("after") or "") or {}).get("state") in ACTIVE:
+            # a continuation: it starts once the recording before it has ended (that recording's worker starts it)
+            result = {"ok": False, "error": "early"}
+        elif gone:
+            r.update(state="failed", reason="gone", finished=now)
+            said, result = dict(r), {"ok": False, "error": "gone"}
+        else:
+            active = [x for x in recs.values() if x.get("state") in ACTIVE]
+            # the same stream, as the planning has it (stream_key: by provider and name, its address may have
+            # turned), its channel's address hashed as scheduled, or the address as the guide has it now; the
+            # recording running goes on, its stop later
+            same = next((x for x in active if x.get("kind") == "iptv" and (x.get("channel", {}).get("hash") == r["channel"]["hash"]
+                                                                          or (x.get("source") or {}).get("url") == url
+                                                                          or stream_key(x) == stream_key(r))), None)
+            latest = latest_of(same, now) if same else 0
+            if same:
+                follow(same, url)              # the address as the guide has it now, whichever way it goes on
+            if same and int(r["end"]) > latest:
+                # past that recording's 12 hours: a continuation, from its end (its worker starts it then);
+                # the show is this one's, not the one that can't hold it
+                r["start"], r["after"] = latest, same["id"]
+                same.setdefault("then", rid)
+                result = {"ok": False, "error": "early", "after": same["id"]}
+            elif same:
+                same["end"] = max(int(same.get("end") or 0), int(r["end"]))
+                if r["title"] not in same.get("titles", []):
+                    same["titles"] = (same.get("titles") or [])[:4] + [r["title"]]
+                merge_shows(same, r)
+                del recs[rid]
+                result = {"ok": True, "id": same["id"], "joined": True, "end": same["end"]}
+            elif len(active) >= cap_of(st):
+                r.update(state="conflict", reason="conflict", others=[x["id"] for x in active][:3])
+                said, result = dict(r), {"ok": False, "error": "cap", "recording": names_of(active)}
+            else:
+                root, problem = verify(raw.get("place"))
+                if not problem and free_of(root) < keep + MARGIN:
+                    problem = "space"
+                if problem:
+                    r.update(state="failed", reason=problem, finished=now)
+                    said, result = dict(r), {"ok": False, "error": problem}
+                else:
+                    name = file_name(r["title"], r["channel"]["name"], now, ".ts",
+                                     lambda n: os.path.lexists(os.path.join(root, n)) or any(x.get("file") == n for x in recs.values()))
+                    r.update(state="starting", reason="", start=now, file=name, source={"url": url}, place=raw.get("place"),
+                             keepFree=keep, quality=q, bytes=0)
+                    r.pop("others", None)
+        recheck(st, now)
+        save(st)
+        end = int(r.get("end") or 0) if r else 0
+    for m in missed:
+        notify(m)
+    notify(said)
+    return result if result is not None else launch(rid, end)
+
+
+def seg_start(r, now=None):
+    """When a running recording began (its 12 hours run from then): a
+    scheduled one when it was claimed, not when it was scheduled"""
+    return int(r.get("start") or r.get("created") or now or time.time())
+
+
+def latest_of(r, now=None):
+    return seg_start(r, now) + MAX_HOURS * 3600
+
+
+def follow(r, url):
+    """A running IPTV recording told its channel's address now: it moves to
+    it (handoff), and goes by that address hashed from now on"""
+    if r.get("kind") != "iptv" or not url:
+        return
+    handoff(r, url)
+    r.setdefault("channel", {})["hash"] = hashlib.sha256(url.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def continuation(st, prev, one, end, now):
+    """A show past prev's 12 hours: prev records to its end, and this entry,
+    from there, holds the show (prev's worker starts it then; the checker if
+    it can't)"""
+    latest = latest_of(prev, now)
+    prev["end"] = latest
+    cid = secrets.token_hex(8)
+    st["seq"] = int(st.get("seq") or 0) + 1
+    st["recordings"][cid] = {"id": cid, "kind": "iptv", "state": "scheduled", "reason": "", "created": now, "seq": st["seq"],
+                             "channel": dict(prev.get("channel") or {}), "provider": prev.get("provider", ""), "private": prev.get("private") is True,
+                             "title": one.get("title", ""), "titles": [one["title"]] if one.get("title") else [], "sub": one.get("sub", ""),
+                             "ep": one.get("ep", ""), "desc": one.get("desc", ""), "category": prev.get("category", ""), "show": one.get("show"),
+                             "start": latest, "end": min(int(end), latest + MAX_HOURS * 3600), "rule": one.get("rule", ""),
+                             "ids": [identity(one)] if one.get("show") else [], "after": prev["id"], "bytes": 0}
+    prev.setdefault("then", cid)
+    return cid
+
+
+def handoff(r, url):
+    """A running IPTV recording told its channel's address now (a playlist
+    that turned its links): its worker moves to it, the same file going on"""
+    if r.get("kind") != "iptv" or not url or (r.get("source") or {}).get("url") == url:
+        return
+    gen = int((r.get("handoff") or {}).get("gen") or 0) + 1
+    r["handoff"] = {"url": url, "gen": gen}
+
+
+def launch(rid, end):
+    """The recording's own service, started: its worker does the rest"""
+    argv = [SYSTEMD_RUN, "--user", "--quiet", "--collect", "--unit=" + UNIT + rid, "--service-type=exec",
+            "--expand-environment=no", "--description=Uber TV recording", "-p", "MemoryMax=768M", "-p", "CPUWeight=20", "-p", "KillMode=mixed",
+            "-p", "RuntimeMaxSec=%d" % ((MAX_HOURS + 1) * 3600)]
+    for var in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
+        if os.environ.get(var, "").startswith("/"):
+            argv.append("--setenv=%s=%s" % (var, os.environ[var]))
+    argv += ["--", PYTHON, "-I", os.path.realpath(__file__), "run", rid]
+    try:
+        ok = subprocess.run(argv, capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    if not ok:
+        finish(rid, "failed", "service")
+        return {"ok": False, "error": "service"}
+    return {"ok": True, "id": rid, "end": end}
+
+
+def stop(rid):
+    with locked():
+        st = load()
+        r = st["recordings"].get(rid)
+        if not r:
+            return {"ok": False, "error": "unknown"}
+        if r.get("state") not in ACTIVE:
+            return {"ok": True}
+        r["stop"] = True
+        save(st)
+    return {"ok": True}
+
+
+def until(rid, end, now=None):
+    now = int(now or time.time())
+    with locked():
+        st = load()
+        r = st["recordings"].get(rid)
+        if not r:
+            return {"ok": False, "error": "unknown"}
+        if r.get("state") not in ACTIVE or r.get("kind") == "youtube-video":
+            return {"ok": False, "error": "notRecording"}
+        latest = latest_of(r, now)
+        if end < now + 30 or end > latest:
+            return {"ok": False, "error": "time", "latest": latest}
+        r["end"] = int(end)
+        save(st)
+        return {"ok": True, "end": r["end"]}
+
+
+def listing():
+    now = int(time.time())
+    missed = []
+    with locked():
+        st = load()
+        if reconcile(st, now, missed) | recheck(st, now):
+            save(st)
+    for m in missed:
+        notify(m)
+    table = mounts()
+    seen = {}
+    out = []
+    for r in sorted(st["recordings"].values(), key=lambda r: -(r.get("created") or 0)):
+        d = {k: r.get(k) for k in PUBLIC if k in r}
+        place = r.get("place") if isinstance(r.get("place"), dict) else {}
+        key = (place.get("volume"), place.get("mount"), place.get("rel"))
+        if key not in seen:
+            seen[key] = verify(place, table)
+        root, problem = seen[key]
+        d["present"] = root is not None
+        d["placeLabel"] = place.get("label") or ""
+        d["path"] = os.path.join(root, r["file"]) if root and r.get("state") in ("done", "incomplete") and safe_name(r.get("file")) else ""
+        out.append(d)
+    rules = [{k: x.get(k) for k in ("id", "channel", "title", "private", "provider", "created")}
+             for x in sorted(st["rules"].values(), key=lambda x: x.get("created") or 0)]
+    return {"ok": True, "recordings": out, "rules": rules}
+
+
+def remove(rid):
+    with locked():
+        st = load()
+        r = st["recordings"].get(rid)
+        if not r:
+            return {"ok": False, "error": "unknown"}
+        if r.get("state") in ACTIVE:
+            r["stop"] = True
+            save(st)
+    if r.get("state") in ACTIVE:
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run([SYSTEMCTL, "--user", "stop", UNIT + rid], capture_output=True, timeout=40)
+    with locked():
+        st = load()
+        r = st["recordings"].get(rid)
+        if not r:
+            return {"ok": True}
+        root, problem = verify(r.get("place"))
+        gone = False
+        name = r.get("file") or ""
+        if root and problem != "drive" and safe_name(name):
+            dfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                for n in (name, part_name(name), os.path.splitext(name)[0] + ".json"):
+                    with contextlib.suppress(FileNotFoundError):
+                        if stat.S_ISREG(os.lstat(n, dir_fd=dfd).st_mode):
+                            os.unlink(n, dir_fd=dfd)
+                drop_work(dfd, rid)
+                gone = True
+            finally:
+                os.close(dfd)
+        thumb = os.path.join(thumbs_dir(), "rec-%s.jpg" % rid)
+        with contextlib.suppress(OSError):
+            os.unlink(thumb)
+        del st["recordings"][rid]
+        save(st)
+        return {"ok": True, "forgotten": not gone}
+
+
+def drop_work(dfd, rid):
+    work = ".work-" + rid
+    try:
+        wfd = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+    except OSError:
+        return
+    try:
+        for n in os.listdir(wfd):
+            with contextlib.suppress(OSError):
+                if not stat.S_ISDIR(os.lstat(n, dir_fd=wfd).st_mode):
+                    os.unlink(n, dir_fd=wfd)
+    finally:
+        os.close(wfd)
+    with contextlib.suppress(OSError):
+        os.rmdir(work, dir_fd=dfd)
+
+
+def finish(rid, state, reason, extra=None):
+    with locked():
+        st = load()
+        r = st["recordings"].get(rid)
+        if not r:
+            return None
+        r.pop("source", None)
+        r.pop("handoff", None)
+        r.pop("stop", None)
+        r["state"] = state
+        r["reason"] = reason
+        r["finished"] = int(time.time())
+        r.update(extra or {})
+        save(st)
+        return dict(r)
+
+
+# ---- the recording itself ----
+
+def classify(err):
+    e = err.lower()
+    if re.search(r"\b(401|403|404|429|451|458|509)\b|forbidden|unauthorized|not found|too many", e):
+        return "refused"
+    if re.search(r"timed out|connection refused|unreachable|name or service|resolve|reset by peer|i/o error", e):
+        return "network"
+    if "invalid data" in e or "could not find codec" in e:
+        return "unreadable"
+    return "stopped"
+
+
+class Tail(threading.Thread):
+    """The last few KB a process said on stderr"""
+
+    def __init__(self, pipe):
+        super().__init__(daemon=True)
+        self.pipe = pipe
+        self.text = ""
+
+    def run(self):
+        for chunk in iter(lambda: self.pipe.read(1024), b""):
+            self.text = (self.text + chunk.decode("utf-8", "replace"))[-8192:]
+
+
+def inhibit():
+    try:
+        p = subprocess.Popen([INHIBIT, "--what=sleep", "--who=Uber TV", "--why=Recording TV", "--mode=block", SLEEP, "infinity"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return None
+    time.sleep(0.4)
+    if p.poll() is not None:
+        return None
+    return p
+
+
+def youtube_manifest(video):
+    out = subprocess.run([YTDLP, "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--no-warnings", "-J", "--",
+                          "https://www.youtube.com/watch?v=" + video], capture_output=True, timeout=120)
+    info = json.loads(out.stdout[:32 * 1024 * 1024] or b"{}")
+    if not isinstance(info, dict):
+        raise LookupError("not live")
+    for f in info.get("formats") or []:
+        if str(f.get("protocol", "")).startswith("m3u8") and isinstance(f.get("manifest_url"), str):
+            return f["manifest_url"]
+    raise LookupError("no live stream")
+
+
+def ffmpeg_argv(url):
+    """ffmpeg copying a stream from the relay (http and https only) to its stdout, as MPEG-TS"""
+    return [FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-protocol_whitelist", "http,https,tcp,tls,crypto",
+            "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_on_network_error", "1",
+            "-reconnect_delay_max", "10", "-rw_timeout", "20000000",
+            "-i", url, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-f", "mpegts", "pipe:1"]
+
+
+class Worker:
+    def __init__(self, rid):
+        self.rid = rid
+        self.stopping = False
+        self.unprotected = False
+        self.url = ""                  # the address it's recording from now (IPTV)
+        self.handoff_gen = 0           # the last move to a new address it made
+        for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(s, self.on_signal)
+
+    def on_signal(self, *args):
+        self.stopping = True
+
+    def read(self):
+        with locked():
+            return load()["recordings"].get(self.rid)
+
+    def beat(self, **changes):
+        with locked():
+            st = load()
+            r = st["recordings"].get(self.rid)
+            if not r:
+                return None
+            r.update(changes, beat=int(time.time()))
+            save(st)
+            return dict(r)
+
+    def run(self):
+        os.umask(0o077)   # what it and its tools write (yt-dlp's video too) is yours alone
+        with locked():
+            st = load()
+            r = st["recordings"].get(self.rid)
+            if not r or r.get("state") != "starting":
+                return
+            r["beat"] = int(time.time())
+            save(st)
+        root, problem = verify(r.get("place"))
+        if problem:
+            done = finish(self.rid, "failed", problem)
+            notify(done)
+            return
+        sleep_guard = inhibit()
+        if not sleep_guard:
+            self.beat(sleepUnprotected=True)   # said while it records, not after
+        self.unprotected = not sleep_guard
+        dfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            if r["kind"] == "youtube-video":
+                state, reason, extra = self.save_video(r, root, dfd)
+            else:
+                state, reason, extra = self.record_live(r, root, dfd)
+        except Exception:
+            # whatever was recorded before it went wrong is kept
+            size = settle(root, r)
+            state, reason, extra = ("incomplete" if size else "failed"), "stopped", {"bytes": size} if size else {}
+        finally:
+            os.close(dfd)
+            if sleep_guard:
+                with contextlib.suppress(OSError):
+                    os.killpg(sleep_guard.pid, signal.SIGTERM)
+        if state is None:
+            # stopped before anything was kept (a video save cancelled): gone
+            with locked():
+                st = load()
+                st["recordings"].pop(self.rid, None)
+                save(st)
+            return
+        # said done (or how it ended) at once; its length and picture follow
+        done = finish(self.rid, state, reason, extra)
+        # a continuation waiting (a show past its 12 hours): started now,
+        # from the address it was recording, before its length and picture
+        nxt = (done or {}).get("then")
+        if nxt and state in ("done", "incomplete") and self.url and time.time() >= int(done.get("end") or 0) - 10:
+            with contextlib.suppress(Exception):
+                claim({"slot": nxt, "url": self.url, "place": r.get("place"), "keepFree": r.get("keepFree", 5 * GiB),
+                       "quality": r.get("quality", 1080)}, int(time.time()))
+        if done and state in ("done", "incomplete"):
+            path = os.path.join(root, done["file"])
+            more = {"duration": duration_of(path), "thumb": thumb_of(path, self.rid)}
+            with locked():
+                st = load()
+                if self.rid in st["recordings"]:
+                    st["recordings"][self.rid].update(more)
+                    save(st)
+            done.update(more)
+        notify(done)
+
+    def should_stop(self, r, root, size, keep):
+        """("done" | "incomplete" | None, reason)"""
+        if self.stopping or not r or r.get("stop"):
+            return "done", ""
+        if r.get("end") and time.time() >= r["end"]:
+            return "done", ""
+        if free_of(root) < keep:
+            return "incomplete", "space"
+        if size > SIZE_MAX:
+            return "incomplete", "size"
+        return None, ""
+
+    def record_live(self, r, root, dfd):
+        name = r["file"]
+        part = part_name(name)
+        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+        relay = None
+        proc = None
+        tail = None
+        outcome, reason = None, ""
+        try:
+            if r["kind"] == "iptv":
+                upstream, height = r["source"]["url"], 1080
+            else:
+                try:
+                    upstream, height = youtube_manifest(r["source"]["video"]), r.get("quality", 1080)
+                except (OSError, ValueError, LookupError, subprocess.TimeoutExpired):
+                    os.close(fd)
+                    fd = None
+                    with contextlib.suppress(OSError):
+                        os.unlink(part, dir_fd=dfd)
+                    return "failed", "offline", {}
+            self.url = upstream if r["kind"] == "iptv" else ""
+            relay, proc, tail = self.open_input(upstream, height, fd)
+            last_beat = 0
+            acknowledged = False
+            while True:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+                size = os.fstat(fd).st_size
+                now = time.time()
+                if (size > 0 and not acknowledged) or now - last_beat >= 10:
+                    changes = {"bytes": size}
+                    if size > 0 and not acknowledged:
+                        changes.update(state="recording", started=int(now))
+                        acknowledged = True
+                        notify_start(self.unprotected)
+                    cur = self.beat(**changes)
+                    last_beat = now
+                else:
+                    cur = self.read()
+                # its channel's address turned (a playlist that turns its links): the
+                # same file goes on from the new one (a few seconds between shows)
+                moved = (cur or {}).get("handoff") if r["kind"] == "iptv" else None
+                if moved and moved.get("gen") != self.handoff_gen and isinstance(moved.get("url"), str):
+                    self.close_input(proc, relay)
+                    relay, proc, tail = self.open_input(moved["url"], height, fd)
+                    self.handoff_gen, self.url = moved["gen"], moved["url"]
+                    self.beat(source={"url": moved["url"]})
+                    continue
+                if proc.poll() is not None:
+                    outcome = "incomplete"
+                    reason = classify(tail.text) if tail else "stopped"
+                    break
+                outcome, reason = self.should_stop(cur, root, size, r["keepFree"])
+                if outcome:
+                    break
+        finally:
+            if proc and proc.poll() is None:
+                proc.send_signal(signal.SIGINT)
+                try:
+                    proc.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            if relay:
+                relay.stop()
+            size = os.fstat(fd).st_size if fd is not None else 0
+            if fd is not None:
+                os.close(fd)
+        if size == 0:
+            with contextlib.suppress(OSError):
+                os.unlink(part, dir_fd=dfd)
+            if outcome == "done":
+                return None, "", {}      # stopped before anything came: nothing to keep
+            return "failed", reason or (classify(tail.text) if tail else "stopped"), {}
+        place_file(dfd, part, name)
+        write_details(dfd, r, size)
+        return outcome or "incomplete", reason, {"bytes": size}
+
+    def open_input(self, upstream, height, fd):
+        """The relay and ffmpeg for an address, writing on into fd"""
+        relay = relay_module().Relay(upstream, height).start()
+        proc = subprocess.Popen(ffmpeg_argv(relay.url), stdin=subprocess.DEVNULL, stdout=fd, stderr=subprocess.PIPE, start_new_session=True)
+        tail = Tail(proc.stderr)
+        tail.start()
+        return relay, proc, tail
+
+    def close_input(self, proc, relay):
+        if proc and proc.poll() is None:
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        if relay:
+            relay.stop()
+
+    def save_video(self, r, root, dfd):
+        work = ".work-" + self.rid
+        os.mkdir(work, 0o700, dir_fd=dfd)
+        q = r.get("quality", 1080)
+        fmt = f"bv*[vcodec^=avc1][height<={q}]+ba[ext=m4a]/bv*[height<={q}]+ba/b[height<={q}]/b"
+        out = os.path.join(root, work, "video.%(ext)s")
+        argv = [YTDLP, "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--no-progress", "--no-warnings", "-q",
+                "--no-mtime", "-f", fmt, "--merge-output-format", "mkv", "-o", out, "--",
+                "https://www.youtube.com/watch?v=" + r["source"]["video"]]
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+        tail = Tail(proc.stderr)
+        tail.start()
+        acknowledged = False
+        outcome = None
+        last_beat = 0
+        try:
+            while proc.poll() is None:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+                size = work_size(dfd, work)
+                media = work_size(dfd, work, media_only=True)
+                if (media > 0 and not acknowledged) or time.time() - last_beat >= 10:
+                    changes = {"bytes": size}
+                    if media > 0 and not acknowledged:
+                        # Saving only once video has come (not yt-dlp's notes)
+                        changes.update(state="recording", started=int(time.time()))
+                        acknowledged = True
+                        notify_start(self.unprotected)
+                    cur = self.beat(**changes)
+                    last_beat = time.time()
+                else:
+                    cur = self.read()
+                stop_now, why = self.should_stop(dict(cur or {}, end=0), root, size, r["keepFree"])
+                if stop_now:
+                    outcome = (stop_now, why)
+                    break
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGINT)
+                try:
+                    proc.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+        result = None
+        if outcome is None and proc.returncode == 0:
+            wfd = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+            try:
+                made = [n for n in os.listdir(wfd) if n.startswith("video.") and not n.endswith((".part", ".ytdl"))
+                        and stat.S_ISREG(os.lstat(n, dir_fd=wfd).st_mode)]
+                if len(made) == 1:
+                    name = os.path.splitext(r["file"])[0] + os.path.splitext(made[0])[1]
+                    if name != r["file"]:
+                        self.beat(file=name)
+                        r["file"] = name
+                    place_file(dfd, os.path.join(work, made[0]), name)
+                    result = os.lstat(name, dir_fd=dfd).st_size
+            finally:
+                os.close(wfd)
+        drop_work(dfd, self.rid)
+        if result:
+            write_details(dfd, r, result)
+            return "done", "", {"bytes": result}
+        if outcome and outcome[0] == "done":
+            return None, "", {}      # you stopped it: nothing half-saved stays
+        return "failed", outcome[1] if outcome else classify(tail.text), {}
+
+
+def work_size(dfd, work, media_only=False):
+    """What's in a video save's work folder; media_only: the video's own
+    files (video.*), not yt-dlp's notes (.ytdl)"""
+    total = 0
+    try:
+        wfd = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+    except OSError:
+        return 0
+    try:
+        for n in os.listdir(wfd):
+            if media_only and (not n.startswith("video.") or n.endswith(".ytdl")):
+                continue
+            with contextlib.suppress(OSError):
+                total += os.lstat(n, dir_fd=wfd).st_size
+    finally:
+        os.close(wfd)
+    return total
+
+
+def write_details(dfd, r, size):
+    """What the card shows, next to the recording (never the stream's address)"""
+    name = os.path.splitext(r["file"])[0] + ".json"
+    details = {"uberTV": 1, "title": r.get("title", ""), "titles": r.get("titles", []), "desc": r.get("desc", ""),
+               "category": r.get("category", ""), "channel": {"name": r["channel"].get("name", ""),
+               "number": r["channel"].get("number", 0), "hash": r["channel"].get("hash", "")},
+               "kind": r["kind"], "video": r.get("video", ""), "start": r.get("started") or r.get("created"),
+               "end": int(time.time()), "bytes": size}
+    with contextlib.suppress(OSError):
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+        with os.fdopen(fd, "w") as f:
+            json.dump(details, f)
+
+
+def duration_of(path):
+    try:
+        out = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        return round(float(out)) if out else 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+def thumb_of(path, rid):
+    d = thumbs_dir()
+    with contextlib.suppress(OSError):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+    out = os.path.join(d, "rec-%s.jpg" % rid)
+    try:
+        subprocess.run([THUMBNAILER, "-i", path, "-o", out, "-s", "480", "-t", "15%", "-q", "7"], capture_output=True, timeout=60)
+        if os.path.getsize(out) > 0:
+            os.chmod(out, 0o600)
+            return out
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+REASONS = {"drive": "the drive isn't there", "readonly": "the drive can't be written to", "space": "the disk got too full",
+           "size": "it reached the largest size a recording can be", "refused": "the provider refused the stream",
+           "network": "the stream stopped answering", "unreadable": "the stream couldn't be read",
+           "stopped": "the stream stopped", "service": "it couldn't start", "offline": "the channel isn't live right now",
+           "gone": "its channel isn't in your list anymore", "conflict": "too many recordings at this time",
+           "notRunning": "Uber TV wasn't running when it was on (logged out, asleep or off)"}
+
+
+def notify(r):
+    """How it went, in an Omarchy notification: never what it is (a channel
+    can be locked while it records); the card in Recordings says"""
+    if not r:
+        return
+    why = REASONS.get(r.get("reason"), "it stopped")
+    if r["state"] == "done":
+        summary, body = "Recording finished", "It's in Uber TV's Recordings."
+    elif r["state"] == "incomplete":
+        summary, body = "Recording stopped early", why[0].upper() + why[1:] + ". What was recorded is in Recordings."
+    elif r["state"] == "missed":
+        summary, body = "Recording missed", why[0].upper() + why[1:] + "."
+    elif r["state"] == "conflict":
+        summary, body = "Recording didn't start", why[0].upper() + why[1:] + "."
+    else:
+        summary, body = "Recording failed", why[0].upper() + why[1:] + "."
+    say_note(summary, body)
+
+
+def notify_start(unprotected):
+    say_note("Recording", "This computer may go to sleep during it: sleep protection is unavailable." if unprotected
+             else "It goes on with Uber TV closed.")
+
+
+def say_note(summary, body):
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        subprocess.run([NOTIFY, "-a", "Uber TV", summary, body], capture_output=True, timeout=10)
+
+
+# ---- pause and rewind: the rolling buffer ----
+
+BUF_DIR = ".uber-tv-buffer"
+BUF_UNIT = "uber-tv-buf-"
+BUF_MINUTES = (5, 30)
+BUF_HEIGHTS = (1080, 720, 480)
+BUF_LEASE = 20                     # seconds without the guide asking for the status: it's gone
+BUF_FIRST_LEASE = 60               # before it first asks
+BUF_MARGIN = 512 * 1024 ** 2       # free space on top of Keep free while it writes (MARGIN more with a recording on that drive)
+BUF_RESTARTS = 3                   # the writer started again, within BUF_RESTART_SPAN, before the buffer gives up
+BUF_RESTART_SPAN = 120
+BUF_FILE_RE = re.compile(r"^(s\d{9}\.ts|p\d{1,6}\.m3u8)(\.tmp)?\Z")   # what the writer makes in a session's folder
+
+
+def buffers_dir():
+    d = os.path.join(ensure_state_dir(), "buffers")
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(d, 0o700)
+    if not stat.S_ISDIR(os.lstat(d).st_mode):
+        raise OSError(errno.ENOTDIR, "the buffers' folder isn't a folder")
+    return d
+
+
+def read_control(session):
+    """A session's control file (its address, secret, place, port), or None"""
+    try:
+        fd = os.open(os.path.join(buffers_dir(), session + ".json"), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        data = f.read(64 * 1024 + 1)
+    try:
+        c = json.loads(data) if len(data) <= 64 * 1024 else None
+    except ValueError:
+        c = None
+    return c if isinstance(c, dict) else None
+
+
+def write_control(session, c):
+    d = buffers_dir()
+    tmp = os.path.join(d, session + ".json.tmp-" + secrets.token_hex(6))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        os.write(fd, json.dumps(c).encode())
+    finally:
+        os.close(fd)
+    os.replace(tmp, os.path.join(d, session + ".json"))
+
+
+def drop_control(session):
+    with contextlib.suppress(OSError):
+        os.unlink(os.path.join(buffers_dir(), session + ".json"))
+
+
+BUF_PROBE_TIMEOUT = 10
+
+
+def buffer_state(session):
+    """A session's service as systemd says: "active", "inactive" (stopped,
+    failed or not there), or "unknown" when it can't be asked"""
+    try:
+        out = subprocess.run([SYSTEMCTL, "--user", "show", "-p", "ActiveState", "--value", BUF_UNIT + session],
+                             capture_output=True, timeout=BUF_PROBE_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    state = out.stdout.decode("utf-8", "replace").strip()
+    if out.returncode != 0 or not state:
+        return "unknown"
+    return "inactive" if state in ("inactive", "failed") else "active"
+
+
+def buffer_running(session):
+    """Running, or not known to have stopped: only a stop systemd confirms
+    lets its folder go or something else use the provider"""
+    return buffer_state(session) != "inactive"
+
+
+def empty_session(bfd, session):
+    """A session's folder emptied of what the writer makes (never following a
+    link, regular files only) and removed; anything else in it stays"""
+    try:
+        sfd = os.open(session, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=bfd)
+    except OSError:
+        return
+    try:
+        for name in os.listdir(sfd):
+            if BUF_FILE_RE.match(name):
+                with contextlib.suppress(OSError):
+                    if stat.S_ISREG(os.lstat(name, dir_fd=sfd).st_mode):
+                        os.unlink(name, dir_fd=sfd)
+    finally:
+        os.close(sfd)
+    with contextlib.suppress(OSError):
+        os.rmdir(session, dir_fd=bfd)
+
+
+def open_buffers(root, make=True):
+    """The place's buffer folder, opened without following links (made if it's missing), or None"""
+    rfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if make:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(BUF_DIR, 0o700, dir_fd=rfd)
+        if not stat.S_ISDIR(os.lstat(BUF_DIR, dir_fd=rfd).st_mode):
+            return None
+        bfd = os.open(BUF_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=rfd)
+        with contextlib.suppress(OSError):
+            os.fchmod(bfd, 0o700)          # yours alone, however it came to be there (where the drive allows)
+        return bfd
+    finally:
+        os.close(rfd)
+
+
+def clean_buffers(root, keep=""):
+    """Sessions left behind (a crash, a drive pulled): their folders, if they're
+    at this place, and every control file whose writer isn't running"""
+    with contextlib.suppress(OSError):
+        for name in os.listdir(buffers_dir()):
+            session = name[:-5] if name.endswith(".json") else ""
+            if ID_RE.match(session) and session != keep and not buffer_running(session):
+                drop_control(session)
+    try:
+        bfd = open_buffers(root, make=False)
+    except OSError:
+        return
+    if bfd is None:
+        return
+    try:
+        for name in os.listdir(bfd):
+            if ID_RE.match(name) and name != keep and not read_control(name):
+                empty_session(bfd, name)
+    finally:
+        os.close(bfd)
+
+
+def buffer_start(raw):
+    """A session started: {"url", "minutes", "place", "keepFree", "height"} on stdin.
+    Answers once its server is up: {session, base} (base: its address, secret included)."""
+    if not isinstance(raw, dict) or not relay_module().web(raw.get("url")) or len(str(raw.get("url"))) > 8192:
+        return {"ok": False, "error": "url"}
+    if raw.get("minutes") not in BUF_MINUTES:
+        return {"ok": False, "error": "minutes"}
+    try:
+        keep = max(GiB, min(100 * GiB, int(raw.get("keepFree", 5 * GiB))))
+    except (TypeError, ValueError):
+        keep = 5 * GiB
+    height = raw.get("height") if raw.get("height") in BUF_HEIGHTS else 1080
+    root, problem = verify(raw.get("place"))
+    if not root:
+        return {"ok": False, "error": "drive"}
+    if problem:
+        return {"ok": False, "error": problem}
+    if free_of(root) < keep + MARGIN:
+        return {"ok": False, "error": "space"}
+    clean_buffers(root)
+    session, secret = secrets.token_hex(8), secrets.token_urlsafe(24)
+    write_control(session, {"session": session, "secret": secret, "url": raw["url"], "minutes": raw["minutes"],
+                            "keepFree": keep, "height": height, "place": raw["place"], "port": 0, "created": int(time.time())})
+    argv = [SYSTEMD_RUN, "--user", "--quiet", "--collect", "--unit=" + BUF_UNIT + session, "--service-type=exec",
+            "--expand-environment=no", "--description=Uber TV pause and rewind", "-p", "MemoryMax=384M", "-p", "CPUWeight=20",
+            "-p", "KillMode=mixed", "-p", "TimeoutStopSec=15", "-p", "RuntimeMaxSec=86400"]
+    for var in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
+        if os.environ.get(var, "").startswith("/"):
+            argv.append("--setenv=%s=%s" % (var, os.environ[var]))
+    argv += ["--", PYTHON, "-I", os.path.realpath(__file__), "buffer-run", session]
+    try:
+        ok = subprocess.run(argv, capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    deadline = time.monotonic() + 10
+    while ok and time.monotonic() < deadline:
+        c = read_control(session)
+        if not c or c.get("failed"):
+            break
+        if c.get("port"):
+            return {"ok": True, "session": session, "base": "http://127.0.0.1:%d/%s" % (c["port"], secret)}
+        time.sleep(0.05)
+    c = read_control(session) or {}
+    buffer_stop(session)
+    return {"ok": False, "error": c.get("failed") if c.get("failed") in ("drive", "readonly", "space") else "service"}
+
+
+def buffer_stop(session):
+    """A session stopped, its writer gone (the provider's stream closed) before
+    it answers ok, its folder deleted. Still running after the stop and a kill:
+    not ok, nothing deleted (asked again, or its lease ends it)"""
+    unit = BUF_UNIT + session
+    try:
+        subprocess.run([SYSTEMCTL, "--user", "stop", unit], capture_output=True, timeout=40)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    if buffer_running(session):
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run([SYSTEMCTL, "--user", "kill", "--signal=SIGKILL", unit], capture_output=True, timeout=10)
+        deadline = time.monotonic() + 10
+        while buffer_running(session) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if buffer_running(session):
+            return {"ok": False, "error": "running"}
+    c = read_control(session)
+    if c:   # the writer didn't clean up after itself (it was killed): its folder and control file
+        root, _ = verify(c.get("place"))
+        if root:
+            with contextlib.suppress(OSError):
+                bfd = open_buffers(root, make=False)
+                if bfd is not None:
+                    try:
+                        empty_session(bfd, session)
+                    finally:
+                        os.close(bfd)
+        drop_control(session)
+    return {"ok": True}
+
+
+def buffer_follow(session, raw):
+    """A session's channel at a new address (a playlist that turned its links):
+    the writer closes the old one, then opens it"""
+    if not isinstance(raw, dict) or not relay_module().web(raw.get("url")) or len(str(raw.get("url"))) > 8192:
+        return {"ok": False, "error": "url"}
+    with locked():
+        c = read_control(session)
+        if not c:
+            return {"ok": False, "error": "unknown"}
+        if c.get("url") == raw["url"] and not c.get("handoff"):
+            return {"ok": True, "same": True}
+        gen = int((c.get("handoff") or {}).get("gen", 0)) + 1
+        c["handoff"] = {"url": raw["url"], "gen": gen}
+        write_control(session, c)
+    return {"ok": True, "gen": gen}
+
+
+def buffer_argv(url, fd, start, run):
+    """ffmpeg copying the channel from the relay into the session's folder (by its
+    fd: a drive that's gone fails, never sends it elsewhere) as 2 s segments"""
+    d = "/proc/self/fd/%d/" % fd
+    return [FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-protocol_whitelist", "http,https,tcp,tls,crypto",
+            "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_on_network_error", "1",
+            "-reconnect_delay_max", "10", "-rw_timeout", "20000000",
+            "-i", url, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy",
+            "-f", "hls", "-hls_time", "2", "-hls_list_size", "3000", "-hls_flags", "temp_file",
+            "-start_number", str(start), "-hls_segment_filename", d + "s%09d.ts", d + "p%d.m3u8" % run]
+
+
+class BufferWorker:
+    def __init__(self, session, clock=time.monotonic, signals=True):
+        self.session = session
+        self.clock = clock
+        self.stopping = False
+        self.state = "filling"
+        self.reason = ""
+        self.proc = None
+        self.relay = None
+        self.tail = None
+        self.run_no = 0
+        self.gen = 0
+        self.restarts = []
+        self.restart_at = None             # when the writer starts again, after it stopped
+        self.relays = relay_module()
+        for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP) if signals else ():
+            signal.signal(s, self.on_signal)
+
+    def on_signal(self, *args):
+        self.stopping = True
+
+    def part(self):
+        return {"state": "failed" if self.reason else self.state, "reason": self.reason}
+
+    def open_writer(self, url, height, sfd, buf):
+        self.run_no += 1
+        try:
+            self.relay = self.relays.Relay(url, height).start()
+            self.proc = subprocess.Popen(buffer_argv(self.relay.url, sfd, buf.next_seq(), self.run_no), stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True, pass_fds=(sfd,))
+        except (OSError, ValueError):
+            self.fail("service")
+            return
+        self.tail = Tail(self.proc.stderr)
+        self.tail.start()
+
+    def close_writer(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.send_signal(signal.SIGINT)
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+        if self.relay:
+            self.relay.stop()
+        self.proc = self.relay = None
+
+    def fail(self, reason):
+        """Gives up: the provider's stream closed at once; the status says why until the guide stops it"""
+        self.close_writer()
+        self.reason = reason
+
+    @staticmethod
+    def free(fd):
+        s = os.fstatvfs(fd)
+        return s.f_bavail * s.f_frsize
+
+    def recording_there(self, place):
+        """A recording running on the same drive (the buffer stops well before it would)"""
+        with contextlib.suppress(OSError):
+            for r in load()["recordings"].values():
+                if r.get("state") in ACTIVE and (r.get("place") or {}).get("volume") == place.get("volume"):
+                    return True
+        return False
+
+    def run(self):
+        os.umask(0o077)
+        c = read_control(self.session)
+        if not c:
+            return
+        root, problem = verify(c.get("place"))
+        if not root or problem:
+            c["failed"] = problem or "drive"
+            write_control(self.session, c)
+            return
+        bfd = sfd = server = None
+        try:
+            bfd = open_buffers(root)
+            if bfd is None:
+                raise OSError(errno.ENOTDIR, "not a folder")
+            os.mkdir(self.session, 0o700, dir_fd=bfd)
+            sfd = os.open(self.session, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=bfd)
+            with contextlib.suppress(OSError):
+                os.fchmod(sfd, 0o700)
+            mod = buffer_module()
+            buf = mod.Buffer(sfd, c["minutes"], self.clock)
+            server = mod.Server(buf, c["secret"], self.part, self.clock).start()
+        except OSError:
+            c["failed"] = "drive"
+            write_control(self.session, c)
+            time.sleep(2)   # long enough for whoever started it to read why
+        else:
+            c["port"] = server.port
+            write_control(self.session, c)
+            self.loop(c, root, sfd, buf, server, mod.PLAYLIST_MAX)
+        finally:
+            self.close_writer()
+            if server:
+                server.stop()
+            if sfd is not None:
+                os.close(sfd)
+            if bfd is not None:
+                empty_session(bfd, self.session)
+                os.close(bfd)
+            drop_control(self.session)
+
+    def loop(self, c, root, sfd, buf, server, most):
+        url, height, keep, place = c["url"], c["height"], c["keepFree"], c["place"]
+        started = self.clock()
+        next_space = next_drive = next_control = 0
+        near_recording = self.recording_there(place)
+        self.open_writer(url, height, sfd, buf)
+        while not self.stopping:
+            now = self.clock()
+            asked = server.asked > started
+            if now - server.asked > (BUF_LEASE if asked else BUF_FIRST_LEASE):
+                return                     # the guide is gone
+            if not self.reason:
+                try:
+                    pfd = os.open("p%d.m3u8" % self.run_no, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=sfd)
+                    with os.fdopen(pfd, "rb") as f:
+                        text = f.read(most).decode("utf-8", "replace")
+                    if buf.ingest(text):
+                        self.state = "ready" if buf.status()["ready"] else "filling"
+                except OSError:
+                    pass
+                if now >= next_space:
+                    next_space = now + 2
+                    try:
+                        if self.free(sfd) < keep + BUF_MARGIN + (MARGIN if near_recording else 0):
+                            self.fail("space")
+                    except OSError:
+                        self.fail("drive")
+                if not self.reason and now >= next_drive:
+                    next_drive = now + 10
+                    near_recording = self.recording_there(place)
+                    there, _ = verify(place)
+                    if there != root:
+                        self.fail("drive")
+                if not self.reason and now >= next_control:
+                    next_control = now + 1
+                    moved = (read_control(self.session) or {}).get("handoff")
+                    if isinstance(moved, dict) and isinstance(moved.get("gen"), int) and moved["gen"] > self.gen \
+                            and self.relays.web(moved.get("url")):
+                        self.close_writer()          # the old address closed before the new one opens
+                        self.gen, url = moved["gen"], moved["url"]
+                        buf.restarted()
+                        self.restart_at = None
+                        self.open_writer(url, height, sfd, buf)
+                if not self.reason and self.proc and self.proc.poll() is not None:
+                    why = classify(self.tail.text) if self.tail else "stopped"
+                    self.restarts = [t for t in self.restarts if now - t < BUF_RESTART_SPAN] + [now]
+                    self.close_writer()
+                    if len(self.restarts) > BUF_RESTARTS:
+                        self.fail(why)
+                    else:
+                        self.restart_at = now + min(8, 2 ** len(self.restarts))
+                if not self.reason and self.restart_at is not None and now >= self.restart_at:
+                    self.restart_at = None
+                    buf.restarted()
+                    self.open_writer(url, height, sfd, buf)
+            time.sleep(0.5)
+
+
+def main(argv):
+    if len(argv) < 2:
+        sys.exit(__doc__)
+    cmd, args = argv[1], argv[2:]
+    if cmd == "drives" and not args:
+        say({"ok": True, "drives": drives()})
+    elif cmd == "check" and len(args) == 1:
+        c = check_place(args[0])
+        say({"ok": False, "error": c["error"]} if "error" in c else dict(c, ok=True, free=free_of(c["path"]), size=size_of(c["path"])))
+    elif cmd == "prepare" and (len(args) == 1 or (len(args) == 2 and args[1] == "make")):
+        say(prepare(args[0], len(args) == 2))
+    elif cmd == "where" and not args:
+        try:
+            place = json.loads(sys.stdin.read(16 * 1024))
+        except ValueError:
+            place = None
+        say(where(place))
+    elif cmd == "mount" and len(args) == 1:
+        say(mount_drive(args[0]))
+    elif cmd == "start" and not args:
+        try:
+            raw = json.loads(sys.stdin.read(64 * 1024))
+        except ValueError:
+            raw = None
+        say(start(raw))
+    elif cmd == "schedule" and not args:
+        try:
+            raw = json.loads(sys.stdin.read(512 * 1024))
+        except ValueError:
+            raw = None
+        say(schedule(raw))
+    elif cmd == "series" and args == ["add"]:
+        try:
+            raw = json.loads(sys.stdin.read(16 * 1024))
+        except ValueError:
+            raw = None
+        say(series_add(raw))
+    elif cmd == "series" and len(args) == 2 and args[0] == "remove" and ID_RE.match(args[1]):
+        say(series_remove(args[1]))
+    elif cmd == "cancel" and len(args) == 1 and ID_RE.match(args[0]):
+        say(cancel(args[0]))
+    elif cmd == "limit" and len(args) == 1 and args[0] in ("1", "2", "3", "4"):
+        say(limit(int(args[0])))
+    elif cmd == "clear" and not args:
+        say(clear())
+    elif cmd == "follow" and not args:
+        try:
+            raw = json.loads(sys.stdin.read(16 * 1024))
+        except ValueError:
+            raw = None
+        say(follow_cmd(raw))
+    elif cmd == "tag" and not args:
+        try:
+            raw = json.loads(sys.stdin.read(16 * 1024))
+        except ValueError:
+            raw = None
+        say(tag(raw))
+    elif cmd in ("stop", "remove") and len(args) == 1 and ID_RE.match(args[0]):
+        say(stop(args[0]) if cmd == "stop" else remove(args[0]))
+    elif cmd == "until" and len(args) == 2 and ID_RE.match(args[0]) and args[1].isdigit():
+        say(until(args[0], int(args[1])))
+    elif cmd == "list" and not args:
+        say(listing())
+    elif cmd == "run" and len(args) == 1 and ID_RE.match(args[0]):
+        Worker(args[0]).run()
+    elif cmd == "buffer" and args == ["start"]:
+        try:
+            raw = json.loads(sys.stdin.read(16 * 1024))
+        except ValueError:
+            raw = None
+        say(buffer_start(raw))
+    elif cmd == "buffer" and len(args) == 2 and args[0] in ("stop", "follow") and ID_RE.match(args[1]):
+        if args[0] == "stop":
+            say(buffer_stop(args[1]))
+        else:
+            try:
+                raw = json.loads(sys.stdin.read(16 * 1024))
+            except ValueError:
+                raw = None
+            say(buffer_follow(args[1], raw))
+    elif cmd == "buffer-run" and len(args) == 1 and ID_RE.match(args[0]):
+        BufferWorker(args[0]).run()
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv)
+    except BrokenPipeError:
+        pass

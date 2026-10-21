@@ -9,6 +9,11 @@ and what's known of it already, then {"path", "duration", "thumb"} for each
 one as its length and picture are worked out, then {"done": true}. Lengths
 come from ffprobe and pictures from ffmpegthumbnailer (both come with
 Omarchy); they're kept in the cache folder, so a video is looked at once.
+
+A folder of recordings (Uber TV Recordings, marked by its .uber-tv-recordings
+file) is left out: recordings are in the library's Recordings, where a
+locked channel's ask for the passcode. My Videos pointed at that folder
+itself lists nothing.
 """
 
 import hashlib
@@ -20,6 +25,7 @@ import sys
 
 EXTENSIONS = {".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv", ".mpg", ".mpeg", ".ogv", ".ts", ".m2ts", ".3gp"}
 SKIP = {"node_modules", "__pycache__", "venv", ".git"}
+MARKER = ".uber-tv-recordings"     # bin/om-pg-dvr's recordings folder
 MAX_VIDEOS = 3000
 MAX_DEPTH = 6
 
@@ -33,7 +39,10 @@ def find(folder):
     base = len(folder.parts)
     for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
         here = pathlib.Path(dirpath)
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP) if len(here.parts) - base < MAX_DEPTH else []
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP and not os.path.lexists(here / d / MARKER)) \
+            if len(here.parts) - base < MAX_DEPTH else []
+        if MARKER in filenames:
+            return []   # the recordings folder itself
         for name in filenames:
             if name.startswith(".") or os.path.splitext(name)[1].lower() not in EXTENSIONS:
                 continue

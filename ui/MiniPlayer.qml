@@ -48,7 +48,10 @@ PanelWindow {
     focus: true
     Keys.onPressed: function(event) {
       var k = event.key
-      if (k === Qt.Key_Escape) guide.closePip()
+      // asked first (a 2nd stream from a recording's provider): Enter watches anyway, Esc stays
+      if (guide.streamAsk && (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Y)) guide.answerStream(true)
+      else if (guide.streamAsk && (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_N)) guide.answerStream(false)
+      else if (k === Qt.Key_Escape) guide.closePip()
       else if (k === Qt.Key_Up || k === Qt.Key_PageUp) guide.pipSurf(1)
       else if (k === Qt.Key_Down || k === Qt.Key_PageDown) guide.pipSurf(-1)
       else if (k === Qt.Key_M) guide.muted = !guide.muted
@@ -101,7 +104,7 @@ PanelWindow {
   // What's on, and the controls: on hover, when clicked, or for a moment after a change
   Rectangle {
     id: pipBar
-    visible: guide.pipPointerIn || guide.pipBannerShown || guide.reception !== "on"
+    visible: guide.pipPointerIn || guide.pipBannerShown || guide.reception !== "on" || !!guide.streamAsk
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
@@ -120,7 +123,7 @@ PanelWindow {
       Text {
         textFormat: Text.PlainText
         width: parent.width
-        text: guide.nowLabel()
+        text: guide.streamAsk ? guide.streamAskLabel : guide.nowLabel()
         color: guide.marquee
         font.family: guide.fonts.body
         font.pixelSize: pipWindow.k * 0.95
@@ -131,8 +134,8 @@ PanelWindow {
       Text {
         textFormat: Text.PlainText
         width: parent.width
-        visible: pipWindow.w >= 360
-        text: guide.vod ? guide.vod.subtitle || "" : guide.onAir ? (guide.onAir.live ? "● LIVE  " : "") + guide.onAir.title : ""
+        visible: pipWindow.w >= 360 || !!guide.streamAsk
+        text: guide.streamAsk ? guide.streamAskNote : guide.vod ? guide.vod.subtitle || "" : guide.onAir ? (guide.onAir.live ? "● LIVE  " : "") + guide.onAir.title : ""
         color: guide.ink
         font.family: guide.fonts.body
         font.pixelSize: pipWindow.k * 0.8
@@ -148,7 +151,7 @@ PanelWindow {
       spacing: pipWindow.k * 0.3
 
       Repeater {
-        model: [
+        model: guide.streamAsk ? [{ label: "WATCH ANYWAY", act: "streamYes" }, { label: "STAY", act: "streamNo" }] : [
           { label: "CH▲", act: "up" }, { label: "CH▼", act: "down" },
           { label: "MUTE", act: "mute" }, { label: "GUIDE", act: "guide" }, { label: "FULL", act: "full" }, { label: "×", act: "close" }
         ]
@@ -178,7 +181,8 @@ PanelWindow {
             cursorShape: Qt.PointingHandCursor
             onClicked: {
               var act = parent.modelData.act
-              if (act === "up") guide.pipSurf(1)
+              if (act === "streamYes" || act === "streamNo") guide.answerStream(act === "streamYes")
+              else if (act === "up") guide.pipSurf(1)
               else if (act === "down") guide.pipSurf(-1)
               else if (act === "mute") guide.muted = !guide.muted
               else if (act === "guide") guide.guidePip()
@@ -193,11 +197,11 @@ PanelWindow {
 
   ChannelIdent {
     anchors.fill: parent
-    up: guide.reception !== "off" && (guide.cardShow ? guide.identUp : guide.reception === "tuning" || guide.reception === "lost")
+    up: guide.reception !== "off" && (guide.cardShow ? guide.identUp : guide.reception === "tuning" || guide.reception === "lost") || guide.identStatus === "stalled"
     logo: guide.vod ? guide.posterFor(guide.vod) : guide.logoFor(guide.channels[guide.tunedRow])
     number: guide.vod ? "" : guide.numbers[guide.tunedRow] ? "CH " + guide.numbers[guide.tunedRow] : ""
     name: guide.vod ? guide.vod.title : guide.channels[guide.tunedRow] ? guide.channels[guide.tunedRow].name : ""
-    status: guide.reception === "tuning" ? (guide.vod ? "loading" : "tuning") : guide.reception === "lost" ? "lost" : ""
+    status: guide.identStatus
     unit: pipWindow.k * 0.75
     look: guide.look
     alarm: guide.colors.alert

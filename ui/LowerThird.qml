@@ -9,7 +9,10 @@ import "../Look.js" as Look
 // what's on it; image is its picture, if any. options, when given, are a
 // row of choices just above it (I or Space while watching: Multiview, Mini
 // player, Guide…), drawn as the menu rows are; optionFocus is the one picked
-// by the arrows, and a click picks one (optionPicked).
+// by the arrows, and a click picks one (optionPicked). A recording's choices
+// (rec) are drawn as the record choice element, with their note under them
+// (what to know before Record is pressed), dimmed when they can't start
+// (unavailable); recording, when given, is the REC badge over the clock.
 Item {
   id: lt
 
@@ -23,7 +26,11 @@ Item {
   property string clock: ""
   property string times: ""
   property var image: null         // a picture over the background ({ url, fit, opacity }), or null
-  property var options: []         // [{ label, icon }], or none
+  property var options: []         // [{ label, icon, rec, note, unavailable }], or none
+  property string recording: ""    // "● REC until 9:00", or none
+  property string timeshift: ""    // pause and rewind: "Live", "2:15 behind live", or none
+  property bool behindLive: false
+  property string note: ""         // a word above the banner while its choices aren't up (two streams from one provider)
   property int optionFocus: -1
   signal optionPicked(int index)
 
@@ -106,6 +113,40 @@ Item {
       anchors.right: parent.right
       anchors.rightMargin: banner.padding
       anchors.verticalCenter: parent.verticalCenter
+      spacing: lt.recording || lt.timeshift ? lt.unit * 0.3 : 0
+      Box {
+        id: tsChip
+        anchors.right: parent.right
+        visible: lt.timeshift !== ""
+        readonly property var st: lt.behindLive ? (lt.look["liveChip:behind"] || lt.look.liveChip || ({})) : (lt.look.liveChip || ({}))
+        width: visible ? tsText.implicitWidth + tsChip.padding * 2 : 0
+        height: visible ? tsText.implicitHeight + tsChip.padding * 0.6 : 0
+        s: tsChip.st
+        unit: lt.unit
+        Label {
+          id: tsText
+          anchors.centerIn: parent
+          text: lt.timeshift
+          s: tsChip.st
+          unit: lt.unit
+        }
+      }
+      Box {
+        id: recBadge
+        anchors.right: parent.right
+        visible: lt.recording !== ""
+        width: visible ? recText.implicitWidth + recBadge.padding * 2 : 0
+        height: visible ? recText.implicitHeight + recBadge.padding * 0.6 : 0
+        s: lt.look.recordBadge || ({})
+        unit: lt.unit
+        Label {
+          id: recText
+          anchors.centerIn: parent
+          text: lt.recording
+          s: lt.look.recordBadge || ({})
+          unit: lt.unit
+        }
+      }
       Label {
         anchors.right: parent.right
         text: lt.clock
@@ -121,37 +162,84 @@ Item {
     }
   }
 
+  // A word above the banner (the choices take its place)
+  Box {
+    id: noteBox
+    visible: lt.note !== "" && lt.options.length === 0
+    x: banner.x
+    y: banner.y - height - lt.unit * 0.8
+    width: noteText.implicitWidth + lt.unit * 1.6
+    height: noteText.implicitHeight + lt.unit * 0.8
+    s: lt.look.recordWarning || ({})
+    unit: lt.unit
+    Label { id: noteText; anchors.centerIn: parent; text: lt.note; s: lt.look.recordWarning || ({}); unit: lt.unit }
+  }
+
   // The choices, just above the banner
+  readonly property bool anyNote: options.some(function(o) { return !!o.note })
+  readonly property real noteMax: lt.unit * 24     // a note wider wraps: no choice runs off the screen
   Row {
+    id: choices
     visible: lt.options.length > 0
     x: banner.x
     y: banner.y - height - lt.unit * 0.8
-    height: lt.unit * 2.8
+    // as tall as the tallest choice (a note on two lines), all the same
+    readonly property real tallest: {
+      var h = 0
+      for (var i = 0; i < choiceList.count; i++) { var it = choiceList.itemAt(i); if (it) h = Math.max(h, it.inside) }
+      return h
+    }
+    height: Math.max(lt.unit * (lt.anyNote ? 4 : 2.8), tallest + lt.unit * 1.2)
     spacing: lt.unit * 0.6
     Repeater {
+      id: choiceList
       model: lt.options
       Box {
         id: option
         required property var modelData
         required property int index
-        readonly property var st: index === lt.optionFocus ? (lt.look["menuRow:focused"] || ({})) : (lt.look.menuRow || ({}))
-        width: optionRow.implicitWidth + lt.unit * 2.2
-        height: lt.unit * 2.8
+        readonly property string el: option.modelData.rec ? "recordChoice" : "menuRow"
+        readonly property var st: index === lt.optionFocus ? (lt.look[el + ":focused"] || ({})) : (lt.look[el] || ({}))
+        readonly property real inside: optionCol.implicitHeight
+        width: Math.max(optionRow.implicitWidth, noteLabel.visible ? noteLabel.width : 0) + lt.unit * 2.2
+        height: parent.height
         s: st
         unit: lt.unit * 0.8
-        Row {
-          id: optionRow
+        opacity: option.modelData.unavailable ? 0.55 : 1
+        Column {
+          id: optionCol
           anchors.centerIn: parent
-          spacing: lt.unit * 0.5
-          Icon {
-            visible: !!option.modelData.icon
-            anchors.verticalCenter: parent.verticalCenter
-            name: option.modelData.icon || ""
-            size: lt.unit * 1.2
-            stroke: 1.8
-            color: option.st.text && option.st.text.color ? option.st.text.color : "white"
+          spacing: lt.unit * 0.15
+          Row {
+            id: optionRow
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: lt.unit * 0.5
+            Icon {
+              visible: !!option.modelData.icon
+              anchors.verticalCenter: parent.verticalCenter
+              name: option.modelData.icon || ""
+              size: lt.unit * 1.2
+              stroke: 1.8
+              color: option.st.text && option.st.text.color ? option.st.text.color : "white"
+            }
+            Label { anchors.verticalCenter: parent.verticalCenter; text: option.modelData.label; s: option.st; unit: lt.unit * 0.8 }
           }
-          Label { anchors.verticalCenter: parent.verticalCenter; text: option.modelData.label; s: option.st; unit: lt.unit * 0.8 }
+          Label {
+            id: noteLabel
+            readonly property bool picked: option.index === lt.optionFocus
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(implicitWidth, lt.noteMax)
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
+            visible: !!option.modelData.note
+            text: option.modelData.note || ""
+            s: lt.look.recordNote || ({})
+            unit: lt.unit * 0.8
+            // on the picked choice, in that choice's own text color, a little
+            // dimmer: the note's color is for the others, and reads poorly on a picked one's fill
+            color: picked && option.st.text && option.st.text.color ? option.st.text.color : (t.color || "white")
+            opacity: picked ? 0.8 : 1
+          }
         }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: lt.optionPicked(option.index) }
       }

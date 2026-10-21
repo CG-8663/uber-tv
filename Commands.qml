@@ -4,6 +4,8 @@ import Quickshell.Io
 import "Look.js" as Look
 import "Saver.js" as SaverRules
 import "AppAsks.js" as Asks
+import "Dvr.js" as DvrRules
+import "Timeshift.js" as Ts
 
 // The guide's commands, for scripts and AI agents: omarchy-shell om-pg <command> ...
 // (skills/program-guide/SKILL.md says how to use them). Each answers with
@@ -89,6 +91,102 @@ Scope {
 
   readonly property string multiviewOff: "Multiview isn't on (multiview \"<numbers>\" opens it)"
 
+  // ---- recordings (DVR.qml) ----
+  readonly property string recordingsOff: "Recordings are off (setRecordingSettings {\"on\": true} turns them on, when the user asks)"
+
+  // A recording as agents see it: a locked channel's says nothing about itself
+  function recordingInfo(rec) {
+    var d = guide.recorder
+    var hide = d.hidden(rec) || d.locked(rec)
+    return { id: rec.id, state: DvrRules.stateOf(rec), kind: rec.kind, locked: hide || undefined,
+             title: hide ? "Locked recording" : (rec.titles && rec.titles.length > 1 ? rec.titles.join(" · ") : rec.title || ""),
+             channel: hide ? undefined : { name: (rec.channel || {}).name || "", number: (rec.channel || {}).number || 0 },
+             started: DvrRules.waiting(rec) ? undefined : rec.started || rec.created || 0, until: DvrRules.active(rec) && rec.end ? rec.end : undefined,
+             show: rec.show && !hide ? { start: rec.show.start, end: rec.show.end, episode: rec.ep || undefined, episodeTitle: rec.sub || undefined } : undefined,
+             records: DvrRules.waiting(rec) ? { from: rec.start, to: rec.end } : undefined,
+             series: rec.rule && guide.recorder.ruleOf(rec) ? rec.rule : undefined,
+             seconds: rec.duration || undefined, bytes: rec.bytes || undefined,
+             why: rec.reason ? d.reasonOf(rec) : undefined,
+             file: hide || !rec.path ? undefined : rec.path }
+  }
+
+  // A series rule as agents see it (a locked channel's names nothing)
+  function seriesInfo(rule) {
+    var hide = rule.private === true
+    return { id: rule.id, title: hide ? "Locked series" : rule.title, locked: hide || undefined,
+             channel: hide ? undefined : { name: (rule.channel || {}).name || "", number: (rule.channel || {}).number || 0 } }
+  }
+
+  // Pause and rewind for an agent: on, a live channel on the TV, its buffer
+  // ready; what's in the way otherwise (it never turns on or starts anything)
+  function pauseProblem() {
+    var p = guide.pauser
+    if (!p.turnedOn) return "pause and rewind is off (Settings → Recordings; setRecordingSettings {\"pauseAndRewind\": 5} turns it on, when the user asks)"
+    if (guide.reception === "off" || guide.vod || (guide.multiview && guide.multiview.active) || !Ts.supported(guide.onAir)) return "no live channel is on the TV"
+    if (!p.active) return p.filling ? "its buffer is still starting: try again in a moment" : (p.cantPauseText || "it isn't running on this channel")
+    return ""
+  }
+  function liveInfo() {
+    var p = guide.pauser
+    return { paused: p.paused, live: p.atLive, behindSeconds: p.atLive ? 0 : Math.round(p.behind / 1000) }
+  }
+
+  function recordingSettingsInfo() {
+    var d = guide.recorder
+    var s = d.settings
+    return { on: s.on, place: { label: d.placeLabel, path: d.placeInfo && d.placeInfo.path || "", drive: !!(s.place && s.place.removable),
+                                there: !(d.placeInfo && d.placeInfo.problem === "drive"), free: d.placeInfo && d.placeInfo.free || undefined },
+             keepFree: s.keepFree || "auto", keepFreeNow: d.keepFreeGB, quality: s.quality || "auto", qualityNow: d.quality,
+             padding: { early: DvrRules.PADDINGS[s.padding][0], late: DvrRules.PADDINGS[s.padding][1] }, atOnce: s.atOnce, pauseAndRewind: s.timeshift,
+             drives: d.drives.map(function(x) { return { device: x.device, label: x.label, mounted: !!x.mount, free: x.mount ? x.free : undefined } }) }
+  }
+
+  // The show on channel number at when (HH:MM today, tomorrow if it's gone
+  // by; next: the next one; now, for a series: on now), from its listings:
+  // { row, show } or { error }
+  function laterShow(number, when, nowToo) {
+    var r = commands.rowsFor(number)[0]
+    if (r === undefined) return { error: "no channel " + number + " (channels <words> finds its number)" }
+    var ch = guide.channels[r]
+    if (ch.kind !== "iptv" || !guide.listingsHave(ch)) return { error: "that channel has no listings to schedule from (an IPTV channel with listings)" }
+    if (guide.channelLock && guide.channelLock.blocks(ch))
+      return { error: "that channel is locked: only the user can record it, with the passcode, at the screen" }
+    var t = String(when).trim().toLowerCase()
+    var now = Date.now() / 1000
+    var at = 0
+    var hm = t.match(/^(\d{1,2}):(\d{2})$/)
+    var dm = t.match(/^(\d{4})-(\d{2})-(\d{2})[ t](\d{1,2}):(\d{2})$/)   // a day and time, as shows gives it
+    var said = nowToo ? "a clock time (21:30), a day and time (2026-10-21 21:30), a show's start from shows, now or next"
+                      : "a clock time (21:30), a day and time (2026-10-21 21:30), a show's start from shows, or next"
+    // a local time that is one (not past 23:59, nor skipped when the clocks go forward)
+    var local = function(y, mo, d, h, mi) {
+      var x = new Date(y, mo - 1, d, h, mi, 0, 0)
+      return x.getFullYear() === y && x.getMonth() === mo - 1 && x.getDate() === d && x.getHours() === h && x.getMinutes() === mi ? x.getTime() / 1000 : 0
+    }
+    if (hm) {
+      var dt = new Date()
+      at = local(dt.getFullYear(), dt.getMonth() + 1, dt.getDate(), Number(hm[1]), Number(hm[2]))
+      if (at && at + 60 < now) {   // tomorrow, by the calendar (a day isn't always 24 hours)
+        dt.setDate(dt.getDate() + 1)
+        at = local(dt.getFullYear(), dt.getMonth() + 1, dt.getDate(), Number(hm[1]), Number(hm[2]))
+      }
+      if (!at) return { error: "no such time then: " + said }
+    } else if (dm) {
+      at = local(Number(dm[1]), Number(dm[2]), Number(dm[3]), Number(dm[4]), Number(dm[5]))
+      if (!at) return { error: "no such day and time: " + said }
+    } else if (/^\d{9,11}$/.test(t)) at = Number(t)   // a show's start (seconds), as shows gives it: the hour that repeats, when the clocks go back, too
+    else if (t === "now" && nowToo) at = now
+    else if (t !== "next") return { error: said }
+    var show = at ? guide.showListed(ch, at) : guide.showListed(ch, 0, now)
+    if (!show) return { error: "no show listed then on that channel" }
+    if (show.end <= now) return { error: "that show is over" }
+    return { row: r, show: show }
+  }
+
+  function recordingById(id) {
+    return guide.recorder.byId[String(id).trim()] || null
+  }
+
   function channelInfo(r) {
     var c = guide.channels[r]
     return { number: guide.numbers[r], name: c.name, kind: c.kind || "youtube", category: c.category || "", live: !!c.live,
@@ -160,7 +258,7 @@ Scope {
 
   readonly property var commandHelp: [
     ["help", "these commands"],
-    ["state", "the guide at a glance: open, channels, theme, filters, settings, and Multiview (its channels in order, layout and sound) while it's on"],
+    ["state", "the guide at a glance: open, channels, theme, filters, settings, Recordings (on, how many recording, how many waiting (Scheduled or Conflict), series), pause and rewind (on, running, paused, how far behind live), and Multiview (its channels in order, layout and sound) while it's on"],
     ["open", "opens the guide"],
     ["display <full|window|\"\">", "how the guide shows: full (over everything, the Omarchy bar too) or window (an ordinary maximized window, the bar showing, on its own desktop); \"\" just says which"],
     ["close", "closes the guide (and turns the TV off)"],
@@ -188,13 +286,31 @@ Scope {
     ["images", "every picture area: [{area, name, picture, fit, opacity, from}] (from: yours, theme, or \"\" for none)"],
     ["setImage <area> <picture> <fit> <opacity>", "an area's picture: a picture's full path, none, theme (back to the theme's) or \"\" (keep it); fit fill|fit|stretch|tile|center|frame; opacity 0.1 to 1 (\"\" keeps either)"],
     ["background <none|wallpaper|/path/to/picture> <dim>", "the picture behind the guide; dim 0 to 0.95 (\"\" keeps it)"],
+    ["record <number> <length>", "records a channel from now: length \"\" for its show's end plus the end-late minutes with listings (an hour without), or minutes (90) or hours (2h), 12 hours at most; a scheduled YouTube channel's show is its video, saved whole. Not locked channels. As many at once as Settings → Recordings allows (2 unless the user chose 1 to 4)"],
+    ["recordUntil <id> <minutes|HH:MM>", "a new stop time for a recording: minutes from now, or a clock time today (within 12 hours of its start)"],
+    ["recordShow <number> <HH:MM|YYYY-MM-DD HH:MM|next>", "records a later show (IPTV with listings): the one on at that time today (tomorrow, if it's gone by), on that day at that time, or at a show's start in seconds (shows gives both: the start for the hour that repeats when the clocks go back), or the next one; Scheduled, or a Conflict when it'd be one too many (Recordings at once; it names the others). Not locked channels"],
+    ["recordSeries <number> <HH:MM|YYYY-MM-DD HH:MM|now|next>", "Record every episode of the show on at that time (a day and time as shows gives it; now: on now; next: the next one): this one too if it's on, then each episode the listings have, not one recorded already. Not locked channels"],
+    ["cancelRecording <id>", "cancels a scheduled recording (an episode of a series isn't scheduled again), or a series by its id (its rule, and its shows not started yet; what it recorded stays). Only when the user asks"],
+    ["stopRecording <id>", "stops a recording (what's recorded is kept)"],
+    ["recordings", "the recordings (the first 300): their state (Scheduled, Conflict, Starting, Recording, Saving, Done, Missed, Incomplete, Failed, Drive missing), title, channel, show times, length, why one didn't go as planned, and file; the series (Record every episode); plus the settings"],
+    ["playRecording <id>", "plays a recording full screen, from where the user stopped (not a locked channel's)"],
+    ["startOver <id>", "plays a recording, a library item or one of the user's videos full screen from the start (playRecording and play resume where the user stopped); not a locked channel's"],
+    ["removeRecording <id>", "deletes a recording: its file, its details and its picture. Only when the user asks"],
+    ["recordingDrives", "the USB drives plugged in (mounted or not), for setRecordingSettings' place"],
+    ["recordingSettings", "Recordings' settings: on, where recordings go (and its free space), space kept free, YouTube quality, how many at once, start early and end late, pause and rewind (minutes kept, 0 off)"],
+    ["setRecordingSettings <json>", "changes them: {\"on\", \"place\": \"videos\" | \"/a/folder\" | \"drive:/dev/sdb1\" (a mounted one), \"keepFree\": \"auto\" or 2, 5, 8, 10, 20 (GB), \"quality\": \"auto\" or 1080, 720, 480, \"padding\": 0, 1 or 2 (none, 1 and 2 minutes, 2 and 5), \"atOnce\": 1 to 4 (how many may record at the same time; 2 unless the user says: each is another stream and ~3 GB an hour), \"pauseAndRewind\": 0, 5 or 30 (minutes the live channel on the TV is kept, to pause and go back; 0 off; it writes to the recordings drive the whole time you watch), \"stopAndCancel\": true to turn off while recording}"],
+    ["pauseLive", "pauses the live channel on the TV, or resumes it if it's paused (pause and rewind: only while it's on and its buffer is ready); answers paused, live, and how far behind live"],
+    ["seekLive <seconds>", "moves the live channel on the TV back (negative) or forward by that many seconds, as far as pause and rewind's buffer goes (past live is live)"],
+    ["goLive", "the live channel on the TV back to live (pause and rewind)"],
+    ["libraryTabs", "the library's tabs in order (Movies & Series, On Demand, My Videos, Recordings, My List), and which show"],
+    ["setLibraryTabs <keys>", "their order, with commas (recordings,movies); the ones left out follow in theirs"],
     ["multiviewBackground <none|#rrggbb|theme|wallpaper|/path/to/picture> <dim>", "Multiview's background: as it is (the theme's colors), a color, the theme's background, the Omarchy wallpaper or a picture; dim 0 to 0.95 darkens a picture (\"\" keeps either)"],
     ["lowerThird <on|off|\"\"> <seconds|\"\">", "the channel banner in full screen (1 to 15 s)"],
     ["card <on|off|\"\"> <seconds|\"\">", "the card shown when changing channel (0.6 to 5 s)"],
     ["home", "Home: on or not, its sections in order (with on/off), its tiles, its background, and the rows that can be added"],
     ["setHome <json>", "changes Home: {\"sections\": [{\"type\": \"continue\", \"on\": true}, {\"type\": \"genre\", \"key\": \"Feature Films\", \"on\": true, \"title\": \"Old movies\", \"size\": \"large\", \"limit\": 12, \"sort\": \"az\"}…], \"tiles\": [\"tv\", \"movies\"…] (in order), \"background\": {\"mode\": \"image\", \"image\": \"/path.jpg\", \"dim\": 0.6}, \"on\": true}; any part can be left out; rows: the built-in ones, or genre, channel, category, folder (a My Videos folder, . for itself), upcoming (a channel's url) with a key"],
     ["rail", "the nav rail: when it shows (always, focus: when the user goes to it, none) and its items in order, each on or off, and whether its part is turned on"],
-    ["setRail <items> <always|focus|none|\"\">", "the nav rail's items, in order, with commas (search, home, tv, movies, ondemand, videos, mylist, settings): the ones named are on, the rest off (settings stays); \"\" keeps them. Then when it shows (\"\" keeps it)"],
+    ["setRail <items> <always|focus|none|\"\">", "the nav rail's items, in order, with commas (search, home, tv, movies, ondemand, videos, recordings, mylist, apps, settings): the ones named are on, the rest off (settings stays); \"\" keeps them. Then when it shows (\"\" keeps it)"],
     ["videos <words>", "My Videos: on or not, its folder, and the videos in it matching the words (\"\" for the newest 100): {total, videos: [{id, title, folder, duration, added, resumeAt, inMyList}]}"],
     ["screenSaver", "the screen saver: on or not (only the user turns it on, in Settings: it keeps the computer from locking while Uber TV is on screen), showing now, the minutes before it starts, the pictures (both, omarchy or folder), how often they change, the clock, and the user's folder with how many pictures it has"],
     ["setScreenSaver '<json>'", "changes the screen saver: {\"after\": 10 (1, 2, 5, 10, 15 or 30 minutes), \"pictures\": \"both|omarchy|folder\", \"every\": 20 (10, 20, 30 or 60 seconds), \"clock\": \"bottomRight|bottomLeft|topRight|topLeft|middle|off\"}; turning it on and choosing its folder stay the user's. Answers what changed and what was ignored, and why"],
@@ -203,6 +319,7 @@ Scope {
     ["addListings <link|path>", "adds a source of program listings: a link to an XMLTV file (.xml, .xml.gz, .xml.xz) or a full path to one; it's fetched at once"],
     ["removeListings <link|path>", "takes a source of program listings off (only when the user asks)"],
     ["search <words>", "what matches the words, as Search shows it: channels (number, name, what's on), shows on now and later today, movies and series, YouTube videos and the user's videos, each with what to give watch or play"],
+    ["shows <number> <words>", "the shows ahead in the listings (IPTV channels with listings, about a day and a half): a channel's (\"\" for every channel), the ones whose title or episode has the words (\"\" for all); the first 100, soonest first: {number, channel, title, episode, episodeNumber, start, end, when, onNow, recording}. Not a locked channel's. recordShow and recordSeries take its when"],
     ["library <words>", "movies and series in the library matching the words (\"\" for the first 100): {total, genres, items: [{id, title, genre, year, series, resumeAt, inMyList}]}"],
     ["play <id>", "plays a library item or one of the user's videos (its id from library or videos) or a YouTube video (yt:<video id>) full screen, from where the user stopped"],
     ["channels <words>", "channels matching the words (\"\" for the first 100): {total, channels: [{number, name, kind, category, live, shown}]}"],
@@ -248,6 +365,10 @@ Scope {
                             saving: guide.appScreens ? guide.appScreens.saving : null,
                             snapshot: guide.snapshots ? guide.snapshots.report : null,
                             multiview: commands.multiviewInfo(),
+                            recordings: { on: guide.recorder.settings.on, recording: guide.recorder.active.length,
+                                          scheduled: guide.recorder.recordings.filter(DvrRules.waiting).length, series: guide.recorder.rules.length },
+                            pauseAndRewind: { on: guide.pauser.turnedOn, running: guide.pauser.active, paused: guide.pauser.active && guide.pauser.paused,
+                                              behindSeconds: guide.pauser.active && !guide.pauser.atLive ? Math.round(guide.pauser.behind / 1000) : 0 },
                             settingsProblem: guide.settingsProblem || undefined })
     }
 
@@ -275,6 +396,8 @@ Scope {
       if (guide.channelLock && guide.channelLock.blocks(guide.channels[r]))
         return commands.failReply(!guide.channelLock.loaded ? "the channel lock hasn't been read (" + (guide.channelLock.failed || "it's being read") + "): no channel plays until it is"
                                                             : "that channel is locked: only the user can unlock it, with the passcode, at the screen")
+      if (guide.recorder.needsAsk(guide.channels[r]))
+        return commands.failReply("a recording is using that channel's provider: watching it takes a 2nd stream, and a one-stream plan may stop the recording. Ask the user (the guide asks them when they go to it)")
       if (!guide.opened) guide.guidePip()
       commands.pendingWatch = r
       watchSoon.restart()
@@ -283,6 +406,8 @@ Scope {
 
     function multiview(numbers: string): string {
       var got = commands.multiviewRows(numbers)
+      if (got.rows && got.rows.some(function(r) { return guide.recorder.needsAsk(guide.channels[r]) }))
+        return commands.failReply("a recording is using the provider of one of those channels: it would take a 2nd stream, and a one-stream plan may stop the recording. Ask the user")
       if (got.error) return commands.failReply(got.error)
       if (!guide.opened || guide.pip) guide.guidePip()
       // a moment later (the guide opening), unless something's overtaken it (Guide.startMultiview)
@@ -292,11 +417,307 @@ Scope {
                                 note: got.rows.length === 1 ? "one channel: Multiview opens with the Add a channel list, for the user to add more" : undefined })
     }
 
+    function record(number: string, length: string): string {
+      var d = guide.recorder
+      if (!d.settings.on) return commands.failReply(commands.recordingsOff)
+      var r = commands.rowsFor(number)[0]
+      if (r === undefined) return commands.failReply("no channel " + number + " (channels <words> finds its number)")
+      if (!guide.airs(guide.channels[r])) return commands.failReply("that channel has nothing to show yet")
+      if (guide.channelLock && guide.channelLock.blocks(guide.channels[r]))
+        return commands.failReply("that channel is locked: only the user can record it, with the passcode, at the screen")
+      var len = String(length).trim().toLowerCase()
+      var end = 0
+      if (len) {
+        var m = len.match(/^(\d+)\s*(m|min|minutes?|h|hours?)?$/)
+        if (!m) return commands.failReply("a length in minutes (90) or hours (2h), or \"\" for its show's end (an hour without listings)")
+        var secs = Number(m[1]) * (m[2] && m[2].charAt(0) === "h" ? 3600 : 60)
+        if (secs < 60 || secs > DvrRules.MAX_HOURS * 3600) return commands.failReply("a minute to 12 hours")
+        end = Math.round(Date.now() / 1000 + secs)
+      }
+      var o = d.offer(r)
+      if (!o) return commands.failReply("nothing to record on that channel now")
+      if (o.unavailable) return commands.failReply(o.note)
+      if (d.busy) return commands.failReply("a recording is starting: ask again in a moment")
+      var res = d.record(r, null, end)
+      if (res !== "ok") return commands.failReply(res)
+      return commands.okReply({ channel: commands.channelInfo(r), kind: o.job.kind, until: o.job.kind === "youtube-video" ? undefined : (end || o.job.end),
+                                note: (o.note ? o.note + "; " : "") + "starting: recordings says when it's recording, or why it couldn't" })
+    }
+
+    function pauseLive(): string {
+      var why = commands.pauseProblem()
+      if (why) return commands.failReply(why)
+      var res = guide.pauser.togglePause()
+      return res === "ok" ? commands.okReply(commands.liveInfo()) : commands.failReply(res)
+    }
+
+    function seekLive(seconds: string): string {
+      var n = Number(String(seconds).trim())
+      if (String(seconds).trim() === "" || !isFinite(n)) return commands.failReply("seconds: a number (negative goes back)")
+      var why = commands.pauseProblem()
+      if (why) return commands.failReply(why)
+      var res = guide.pauser.seekBy(n)
+      return res === "ok" ? commands.okReply(commands.liveInfo()) : commands.failReply(res)
+    }
+
+    function goLive(): string {
+      var why = commands.pauseProblem()
+      if (why) return commands.failReply(why)
+      var res = guide.pauser.live()
+      return res === "ok" ? commands.okReply(commands.liveInfo()) : commands.failReply(res)
+    }
+
+    function recordUntil(id: string, when: string): string {
+      var rec = commands.recordingById(id)
+      if (!rec) return commands.failReply("no recording " + id + " (recordings lists them)")
+      if (!DvrRules.active(rec) || rec.kind === "youtube-video") return commands.failReply("that one isn't recording")
+      var t = String(when).trim()
+      var now = Date.now() / 1000
+      var end = 0
+      var hm = t.match(/^(\d{1,2}):(\d{2})$/)
+      if (hm) {
+        var d = new Date()
+        d.setHours(Number(hm[1]), Number(hm[2]), 0, 0)
+        end = d.getTime() / 1000
+        if (end <= now) end += 86400
+      } else if (/^\d+$/.test(t)) end = now + Number(t) * 60
+      else return commands.failReply("minutes from now (30), or a clock time (21:30)")
+      var latest = (rec.start || rec.created || now) + DvrRules.MAX_HOURS * 3600   // from when it began
+      if (end > latest) return commands.failReply("past 12 hours from its start (" + guide.clock(latest) + " at the latest)")
+      guide.recorder.setEnd(rec.id, end)
+      return commands.okReply({ id: rec.id, until: Math.round(end) })
+    }
+
+    function stopRecording(id: string): string {
+      var rec = commands.recordingById(id)
+      if (!rec) return commands.failReply("no recording " + id + " (recordings lists them)")
+      if (!DvrRules.active(rec)) return commands.failReply("that one isn't recording")
+      guide.recorder.stop(rec.id)
+      return commands.okReply({ id: rec.id, note: "stopping: what's recorded is kept" })
+    }
+
+    function recordings(): string {
+      guide.recorder.refresh()
+      return commands.okReply({ settings: commands.recordingSettingsInfo(),
+                                recordings: guide.recorder.recordings.slice(0, 300).map(commands.recordingInfo),
+                                series: guide.recorder.rules.map(commands.seriesInfo) })
+    }
+
+    function recordShow(number: string, when: string): string {
+      var d = guide.recorder
+      if (!d.settings.on) return commands.failReply(commands.recordingsOff)
+      var got = commands.laterShow(number, when, false)
+      if (got.error) return commands.failReply(got.error)
+      if (got.show.start <= Date.now() / 1000 + 60) return commands.failReply("that show is on now: record " + number + " records it")
+      var o = d.laterOffer(got.row, got.show)
+      if (!o) return commands.failReply("that show can't be scheduled")
+      var res = d.schedule(got.row, got.show, null)
+      if (res !== "ok") return commands.failReply(res)
+      return commands.okReply({ channel: commands.channelInfo(got.row), title: got.show.title, start: got.show.start, end: got.show.end,
+                                note: (o.why || o.note ? (o.why || o.note) + "; " : "") + "scheduling: recordings says Scheduled, or Conflict and why" })
+    }
+
+    function recordSeries(number: string, when: string): string {
+      var d = guide.recorder
+      if (!d.settings.on) return commands.failReply(commands.recordingsOff)
+      var got = commands.laterShow(number, when, true)
+      if (got.error) return commands.failReply(got.error)
+      var res = d.recordSeries(got.row, got.show, null)
+      if (res !== "ok") return commands.failReply(res)
+      return commands.okReply({ channel: commands.channelInfo(got.row), title: got.show.title,
+                                note: "every episode from now on as the listings have them (about a day and a half ahead, fetched twice a day); recordings lists the series and what's scheduled" })
+    }
+
+    function cancelRecording(id: string): string {
+      var d = guide.recorder
+      var key = String(id).trim()
+      var rule = d.rules.filter(function(x) { return x.id === key })[0]
+      if (rule) {
+        d.stopSeries(rule.id)
+        return commands.okReply({ series: rule.id, note: "the series stops: its shows not started yet are cancelled, what it recorded stays" })
+      }
+      var rec = commands.recordingById(key)
+      if (!rec) return commands.failReply("no recording or series " + id + " (recordings lists them)")
+      if (DvrRules.active(rec)) return commands.failReply("that one is recording: stopRecording stops it")
+      if (!DvrRules.waiting(rec)) return commands.failReply("that one isn't scheduled (" + DvrRules.stateOf(rec) + ")")
+      d.cancel(rec.id)
+      return commands.okReply({ id: rec.id, note: rec.rule ? "cancelled; its series won't schedule this episode again" : "cancelled" })
+    }
+
+    function playRecording(id: string): string {
+      var rec = commands.recordingById(id)
+      if (!rec) return commands.failReply("no recording " + id + " (recordings lists them)")
+      if (guide.recorder.locked(rec)) return commands.failReply("that's a locked channel's recording: only the user can unlock it, with the passcode, at the screen")
+      if (!DvrRules.playable(rec)) return commands.failReply(DvrRules.stateOf(rec) === "Drive missing" ? "its drive isn't plugged in" : "it isn't ready to play (" + DvrRules.stateOf(rec) + ")")
+      if (!guide.opened) guide.guidePip()
+      commands.pendingRecording = { id: rec.id, tries: 0 }
+      recordingSoon.restart()
+      return commands.okReply({ id: rec.id, note: "playing once the guide is up (checked again then)" })
+    }
+
+    // a recording, a library item or one of the user's videos, from the start
+    function startOver(id: string): string {
+      var key = String(id).trim()
+      var rec = commands.recordingById(key)
+      if (rec) {
+        if (guide.recorder.locked(rec)) return commands.failReply("that's a locked channel's recording: only the user can unlock it, with the passcode, at the screen")
+        if (!DvrRules.playable(rec)) return commands.failReply(DvrRules.stateOf(rec) === "Drive missing" ? "its drive isn't plugged in" : "it isn't ready to play (" + DvrRules.stateOf(rec) + ")")
+        if (!guide.opened) guide.guidePip()
+        commands.pendingRecording = { id: rec.id, tries: 0, fromStart: true }
+        recordingSoon.restart()
+        return commands.okReply({ id: rec.id, from: 0, note: "playing from the start once the guide is up (checked again then)" })
+      }
+      var entry = guide.entryFor(key)
+      if (!entry) return commands.failReply("nothing with id \"" + id + "\" (recordings lists recordings, library \"<words>\" movies, videos \"<words>\" the user's videos; a YouTube video is yt:<its id>)")
+      if (entry.videoId && guide.videoLockedBy(entry.videoId, entry.subtitle, entry.owners, entry.ownersMore)) return commands.failReply("that video is from a locked channel: only the user can unlock it, with the passcode, at the screen")
+      if (!guide.opened) guide.guidePip()
+      commands.pendingPlay = entry
+      commands.pendingFrom = 0
+      playSoon.restart()
+      return commands.okReply({ playing: entry.title, from: 0 })
+    }
+
+    // the shows ahead in the listings: a channel's, or all channels' matching the words
+    function shows(number: string, words: string): string {
+      var rows = []
+      if (String(number).trim()) {
+        var one = commands.rowsFor(number)[0]
+        if (one === undefined) return commands.failReply("no channel " + number + " (channels <words> finds its number)")
+        var c1 = guide.channels[one]
+        if (c1.kind !== "iptv" || !guide.listingsHave(c1)) return commands.failReply("that channel has no listings (an IPTV channel with listings)")
+        if (guide.titlesHidden(c1)) return commands.failReply("that channel is locked: its shows aren't listed")
+        rows = [one]
+      } else for (var i = 0; i < guide.channels.length; i++) rows.push(i)
+      var terms = String(words).toLowerCase().split(/\s+/).filter(function(t) { return t })
+      var now = Date.now() / 1000
+      // every match counted, only the soonest 100 kept (in order, as they're found)
+      var kept = []
+      var total = 0
+      var before = function(a, b) { return a.s[0] - b.s[0] || a.n - b.n }
+      for (var k = 0; k < rows.length; k++) {
+        var ch = guide.channels[rows[k]]
+        if (ch.kind !== "iptv" || !guide.listingsHave(ch) || guide.titlesHidden(ch)) continue   // a locked channel's shows aren't found by their titles
+        var n = guide.numbers[rows[k]]
+        guide.eachListed(ch, now, now + 2 * 86400, function(s) {
+          if (terms.length) {
+            var hay = (s[2] + " " + (s[5] || "")).toLowerCase()
+            for (var q = 0; q < terms.length; q++) if (hay.indexOf(terms[q]) < 0) return
+          }
+          total++
+          var f = { r: rows[k], ch: ch, n: n, s: s }
+          if (kept.length >= 100 && before(f, kept[kept.length - 1]) >= 0) return
+          var lo = 0, hi = kept.length
+          while (lo < hi) { var mid = (lo + hi) >> 1; if (before(kept[mid], f) <= 0) lo = mid + 1; else hi = mid }
+          kept.splice(lo, 0, f)
+          if (kept.length > 100) kept.pop()
+        })
+      }
+      return commands.okReply({ total: total, more: total > 100,
+                                shows: kept.map(function(f) {
+                                  var s = guide.listedShow(f.s)
+                                  return { number: guide.numbers[f.r], channel: f.ch.name, title: s.title, episode: s.sub || undefined, episodeNumber: s.ep || undefined,
+                                           start: s.start, end: s.end, when: Qt.formatDateTime(new Date(s.start * 1000), "yyyy-MM-dd HH:mm"),
+                                           onNow: s.start <= now, recording: guide.recMark(f.ch, s) || undefined }
+                                }),
+                                note: "watch <number> puts one on now; recordShow <number> \"<when>\" records a later one, recordSeries every episode" })
+    }
+
+    function removeRecording(id: string): string {
+      var rec = commands.recordingById(id)
+      if (!rec) return commands.failReply("no recording " + id + " (recordings lists them)")
+      guide.recorder.remove(rec.id)
+      return commands.okReply({ id: rec.id, note: DvrRules.stateOf(rec) === "Drive missing" ? "taken off the list (its file stays on the drive)" : "deleted: its file, details and picture" })
+    }
+
+    function recordingDrives(): string {
+      guide.recorder.listDrives()
+      return commands.okReply({ drives: commands.recordingSettingsInfo().drives, note: "listed again just now: ask again in a moment for the newest" })
+    }
+
+    function recordingSettings(): string {
+      guide.recorder.checkPlace()
+      return commands.okReply(commands.recordingSettingsInfo())
+    }
+
+    function setRecordingSettings(json: string): string {
+      var given
+      try { given = JSON.parse(String(json)) } catch (e) { return commands.failReply("not valid JSON: " + e.message) }
+      if (!given || typeof given !== "object" || Array.isArray(given)) return commands.failReply("{\"on\", \"place\", \"keepFree\", \"quality\", \"padding\", \"atOnce\", \"pauseAndRewind\"}")
+      var d = guide.recorder
+      var ignored = []
+      var changes = {}
+      var note = ""
+      for (var k in given) if (["on", "place", "keepFree", "quality", "padding", "atOnce", "pauseAndRewind", "stopAndCancel"].indexOf(k) < 0) ignored.push(k)
+      if (given.on !== undefined) {
+        if (typeof given.on !== "boolean") ignored.push("on (true or false)")
+        else if (!given.on && d.settings.on && (d.active.length || d.busy || d.hasWaiting) && given.stopAndCancel !== true)
+          return commands.failReply("turning Recordings off would " + guide.recOffWhat() + ": "
+                                    + (d.active.concat(d.recordings.filter(DvrRules.waiting)).map(function(r) { return commands.recordingInfo(r).title || "a recording" }).join(", ") || "one starting")
+                                    + ". Ask the user; then again with \"stopAndCancel\": true")
+        else if (!given.on && d.settings.on) d.turnOff()
+        else if (given.on) changes.on = true
+      }
+      if (given.keepFree !== undefined) {
+        if (given.keepFree === "auto") changes.keepFree = 0
+        else if (DvrRules.KEEP_FREE.indexOf(given.keepFree) >= 0) changes.keepFree = given.keepFree
+        else ignored.push("keepFree (\"auto\" or " + DvrRules.KEEP_FREE.join(", ") + ")")
+      }
+      if (given.quality !== undefined) {
+        if (given.quality === "auto") changes.quality = 0
+        else if (DvrRules.QUALITIES.indexOf(given.quality) >= 0) changes.quality = given.quality
+        else ignored.push("quality (\"auto\" or " + DvrRules.QUALITIES.join(", ") + ")")
+      }
+      if (given.padding !== undefined) {
+        if (given.padding === 0 || given.padding === 1 || given.padding === 2) changes.padding = given.padding
+        else ignored.push("padding (0, 1 or 2)")
+      }
+      if (given.atOnce !== undefined) {
+        if (DvrRules.AT_ONCE.indexOf(given.atOnce) >= 0) changes.atOnce = given.atOnce
+        else ignored.push("atOnce (" + DvrRules.AT_ONCE.join(", ") + ")")
+      }
+      if (given.pauseAndRewind !== undefined) {
+        if (Ts.MINUTES.indexOf(given.pauseAndRewind) >= 0) changes.timeshift = given.pauseAndRewind
+        else ignored.push("pauseAndRewind (" + Ts.MINUTES.join(", ") + ")")
+      }
+      if (Object.keys(changes).length) d.set(changes)
+      if (given.place !== undefined) {
+        var pl = String(given.place).trim()
+        if (pl === "videos") d.useDefault()
+        else if (pl.indexOf("drive:") === 0) {
+          var dev = pl.slice(6)
+          var drive = d.drives.filter(function(x) { return x.device === dev })[0]
+          if (!drive) ignored.push("place (no such drive: recordingDrives lists them)")
+          else if (!drive.mount) ignored.push("place (that drive isn't opened: the user opens it in Settings → Recordings)")
+          else { d.useFolder(drive.mount); note = "checked and made ready first: recordingSettings says where, in a moment" }
+        } else if (pl.charAt(0) === "/") { d.useFolder(pl); note = "checked and made ready first: recordingSettings says where, in a moment (or why not)" }
+        else ignored.push("place (\"videos\", a folder's full path, or \"drive:<device>\")")
+      }
+      return commands.okReply({ settings: commands.recordingSettingsInfo(), ignored: ignored, note: note || undefined })
+    }
+
+    function libraryTabs(): string {
+      return commands.okReply({ tabs: guide.checkedLibraryOrder(guide.libraryOrder).map(function(k) {
+        var t = guide.libraryTabKinds.filter(function(x) { return x.key === k })[0]
+        return { key: k, label: t.label, shown: guide.libraryTabShown(k) }
+      }), note: "My Videos shows while it's on; Recordings while it's on or there are some" })
+    }
+
+    function setLibraryTabs(keys: string): string {
+      var list = String(keys).split(",").map(function(k) { return k.trim().toLowerCase() }).filter(function(k) { return k })
+      var known = guide.libraryTabKinds.map(function(t) { return t.key })
+      var ignored = list.filter(function(k) { return known.indexOf(k) < 0 })
+      guide.libraryOrder = guide.checkedLibraryOrder(list)
+      guide.saveSettings()
+      return commands.okReply({ order: guide.libraryOrder, ignored: ignored.map(function(k) { return k + " (" + known.join(", ") + ")" }) })
+    }
+
     function multiviewAdd(number: string): string {
       var mv = guide.multiview
       if (!mv.active) return commands.failReply(commands.multiviewOff)
       if (mv.count >= 4) return commands.failReply("Multiview holds four channels: take one off first (multiviewRemove <number>)")
       var got = commands.multiviewRows(number)
+      if (got.rows && got.rows.some(function(r) { return guide.recorder.needsAsk(guide.channels[r]) }))
+        return commands.failReply("a recording is using that channel's provider: it would take a 2nd stream, and a one-stream plan may stop the recording. Ask the user")
       if (got.error) return commands.failReply(got.error)
       if (got.rows.length !== 1) return commands.failReply("one channel number")
       if (mv.addTile(guide.channels[got.rows[0]].url) < 0) return commands.failReply("channel " + String(number).trim() + " is on Multiview already")
@@ -707,7 +1128,7 @@ Scope {
         items: guide.railSetup.map(function(it) {
           return { key: it.key, label: guide.railKind(it.key).label, on: it.on, partOn: guide.railAvailable(it.key), onRail: guide.railItems.some(function(r) { return r.key === it.key }) }
         }),
-        note: "an item whose part is off (Home screen, My Videos) stays off the rail until the part is turned on"
+        note: "an item whose part is off (Home screen, My Videos, Apps while apps are off, Recordings while they're off and there are none) stays off the rail until the part is turned on"
       })
     }
 
@@ -847,6 +1268,7 @@ Scope {
       if (entry.videoId && guide.videoLockedBy(entry.videoId, entry.subtitle, entry.owners, entry.ownersMore)) return commands.failReply("that video is from a locked channel: only the user can unlock it, with the passcode, at the screen")
       if (!guide.opened) guide.guidePip()
       commands.pendingPlay = entry
+      commands.pendingFrom = undefined
       playSoon.restart()
       return commands.okReply({ playing: entry.title, from: guide.resumeAt(entry.id) })
     }
@@ -1028,11 +1450,28 @@ Scope {
   }
 
   // play, from the command: once the guide is up
+  // playRecording, from the command: once the guide is up, the recording
+  // checked again (still there, playable, not locked) before it plays
+  property var pendingRecording: null
+  Timer {
+    id: recordingSoon
+    interval: 600
+    onTriggered: {
+      var p = commands.pendingRecording
+      if (!p) return
+      if (!guide.opened && p.tries < 8) { p.tries += 1; recordingSoon.restart(); return }   // still opening
+      commands.pendingRecording = null
+      var rec = guide.recorder.byId[p.id]
+      if (!guide.opened || !rec || !DvrRules.playable(rec) || guide.recorder.locked(rec)) return
+      guide.playRecording(guide.recordingCard(rec), !!p.fromStart)
+    }
+  }
   property var pendingPlay: null
+  property var pendingFrom: undefined     // startOver: 0; play: where the user stopped
   Timer {
     id: playSoon
     interval: 600
-    onTriggered: if (commands.pendingPlay) { guide.playVod(commands.pendingPlay); commands.pendingPlay = null }
+    onTriggered: if (commands.pendingPlay) { guide.playVod(commands.pendingPlay, commands.pendingFrom); commands.pendingPlay = null; commands.pendingFrom = undefined }
   }
 
   // watch, from the command: once the mini player (or the guide) is up

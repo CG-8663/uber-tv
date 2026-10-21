@@ -343,7 +343,32 @@ var ELEMENTS = [
   { key: "mvShow", section: "MULTIVIEW", label: "What's on", follows: "posterSub", about: "what's on a tile's channel",
     text: true, style: {} },
   { key: "mvSound", section: "MULTIVIEW", label: "Sound badge", follows: "cardBadge", about: "SOUND on the tile you hear",
-    box: ["fill", "border", "radius", "padding"], text: true, style: {} }
+    box: ["fill", "border", "radius", "padding"], text: true, style: {} },
+  // Recordings (the DVR)
+  { key: "recordBadge", section: "RECORDINGS", label: "REC badge", follows: "liveBadge", about: "● REC with its stop time, on the channel banner and on a card that's recording",
+    box: ["fill", "border", "radius", "padding"], text: true, style: {} },
+  { key: "recordChoice", section: "RECORDINGS", label: "Record choice", follows: "menuRow", about: "Record, Save video, Stop recording and the stop times among the banner's choices; Record, Record every episode, Cancel recording and Stop recording this series among a show's choices in the guide; a recording's choices in its details; focused is the one picked (one that can't start now is dimmed, its reason under it)",
+    box: BOX, text: true, states: ["focused"], own: { height: "length", grow: "fraction" }, style: {} },
+  { key: "recordNote", section: "RECORDINGS", label: "Record note", follows: "posterSub", about: "the line under a Record choice: a second stream from the provider, too many recordings right now, too little space, the drive missing",
+    text: true, style: {} },
+  { key: "recordWarning", section: "RECORDINGS", label: "Two-stream warning", follows: "cardBadge", about: "the word above the banner while you watch one channel and record another from the same IPTV provider (two streams)",
+    box: ["fill", "border", "radius", "padding"], text: true, style: {} },
+  { key: "recordingCard", section: "RECORDINGS", label: "Card", follows: "posterCard", about: "a recording's card in Recordings and on Home; current is the one under the cursor",
+    box: BOX, states: ["current"], style: {} },
+  { key: "upcomingRecording", section: "RECORDINGS", label: "Upcoming card", follows: "posterCard", about: "a show scheduled to record, its card in Recordings (Upcoming, and a conflict); current is the one under the cursor",
+    box: BOX, states: ["current"], style: {} },
+  { key: "recordingState", section: "RECORDINGS", label: "State", about: "the word on a recording's card: Recording and Saving (recording), Scheduled (scheduled), Failed, Missed, Incomplete, Conflict and Drive missing (attention), Done",
+    box: ["fill", "border", "radius", "padding"], text: true, states: ["recording", "scheduled", "attention"],
+    style: { fill: "#cc000000", radius: 1, padding: 0.4, text: { color: "#ffffff", size: 0.7, weight: "bold", case: "none" } },
+    stateStyle: { recording: { fill: "alert", text: { color: "#ffffff" } }, scheduled: { text: { color: "accent" } }, attention: { text: { color: "alert" } } } },
+  { key: "recordDot", section: "RECORDINGS", label: "Cell mark", follows: "liveTag", about: "● Recording, Scheduled or Conflict in a program cell whose show is recording or scheduled to; its color goes with the cell's text unless set",
+    text: true, style: {} },
+  { key: "recordingProgress", section: "RECORDINGS", label: "Progress", follows: "vodProgress", about: "how far a recording is to its stop time, along its card's bottom",
+    box: ["fill", "radius"], own: { track: "color", height: "length" }, style: { fill: "alert" } },
+  { key: "liveChip", section: "RECORDINGS", label: "Pause and rewind chip", about: "Live, or how far behind live (2:15 behind live), on the channel banner while pause and rewind is on, and on the picture while it's behind; behind is that state",
+    box: ["fill", "border", "radius", "padding"], text: true, states: ["behind"],
+    style: { fill: "alert", radius: 1, padding: 0.4, text: { color: "#ffffff", font: "mono", size: 0.7, weight: "bold", case: "none" } },
+    stateStyle: { behind: { fill: "#cc000000", text: { color: "#ffffff" } } } }
 ]
 
 // How the guide is laid out. Lengths are in units.
@@ -429,7 +454,7 @@ for (var e = 0; e < ELEMENTS.length; e++) BY_KEY[ELEMENTS[e].key] = ELEMENTS[e]
 
 // Elements whose box would be drawn hundreds of times: no shadows there,
 // except in a state only one of them is in at a time.
-var NO_SHADOW = { channelCell: true, programCell: true, band: true, timeBar: true, listRow: true, appCard: true }
+var NO_SHADOW = { channelCell: true, programCell: true, band: true, timeBar: true, listRow: true, appCard: true, recordingCard: true, upcomingRecording: true }
 var ONE_AT_A_TIME = ["selected", "current", "focused"]
 
 function isObject(v) { return v !== null && typeof v === "object" && !Array.isArray(v) }

@@ -107,7 +107,8 @@ const block = (text, opener) => {
   const locked = { "u/105": true }
   const guide = { numbers: [101, 102, 103, 104, 105, 106], channels, visibleRows: [0, 1, 2, 3, 4, 5], opened: true, pip: false, tunedRow: -1, summoned: 0,
                   airs: ch => ch.url !== "u/106", guidePip() { guide.summoned++ }, multiview: mv, mvRequest: 0, requestMultiview() { return ++guide.mvRequest },
-                  channelLock: { loaded: true, blocks: ch => !!locked[ch.url], isLocked: ch => !!locked[ch.url] } }
+                  channelLock: { loaded: true, blocks: ch => !!locked[ch.url], isLocked: ch => !!locked[ch.url] },
+                  recorder: { needsAsk: () => false } }
   const timer = { restarts: 0, restart() { timer.restarts++ } }
   const commands = { okReply: o => ({ ok: true, ...o }), failReply: e => ({ ok: false, error: e }), pendingMultiview: null,
                      multiviewOff: "Multiview isn't on (multiview \"<numbers>\" opens it)" }
@@ -184,7 +185,7 @@ const block = (text, opener) => {
 
 // ---- an agent's Multiview starts only if nothing's overtaken it, and after an app's video lets go ----
 {
-  const fired = new Function("guide", "commands", "multiviewSoon", block(commandsSrc, "onTriggered: {"))
+  const fired = new Function("guide", "commands", "multiviewSoon", commandsSrc.match(/id: multiviewSoon[\s\S]*?onTriggered: \{([\s\S]*?)\n    \}\n/)[1])
   const realStart = new Function("root", "appPlaybackItem", "multiviewItem", "urls", "request", block(guideSrc, "function startMultiview(urls, request) {"))
   const request = new Function("root", guideSrc.match(/function requestMultiview\(\) \{ (.*) \}\n/)[1])
   const started = [], closes = []
@@ -241,7 +242,8 @@ const block = (text, opener) => {
 
   // the preview box waits while one is on its way (its tune would overtake
   // it), and plays again once it's started or dropped (the real previewRow)
-  const preview = new Function("root", "multiviewItem", "channelLockItem", block(guideSrc, "function previewRow() {"))
+  const previewFn = new Function("root", "multiviewItem", "channelLockItem", "dvr", block(guideSrc, "function previewRow() {"))
+  const preview = (r, m, l) => previewFn(r, m, l, { needsAsk: () => false })
   let tunes = 0
   Object.assign(root, { opened: true, appPlaying: false, watching: false, managing: false, screen: "guide", channels: [{ url: "u/9" }], row: 0, tunedRow: -1, reception: "off",
                         mvWaitingFor: -1, airs: () => true, tune() { tunes++; root.mvRequest += 1 } })
@@ -264,7 +266,7 @@ const block = (text, opener) => {
   // what overtakes it: turning off, closing, a channel, a video, an app's video
   for (const opener of ["function turnOff() {", "function closeNow() {", "function tune(r, at, retrying) {", "function playVod(entry, from) {"])
     assert.match(block(guideSrc, opener), /root\.mvRequest \+= 1/, opener)
-  assert.match(guideSrc, /onAppPlayingChanged: if \(appPlaying\) mvRequest \+= 1/)
+  assert.match(guideSrc, /onAppPlayingChanged: if \(appPlaying\) \{ mvRequest \+= 1/)
 }
 
 // ---- the phone in full screen: ▲ opens the banner's choices (Multiview
@@ -274,10 +276,10 @@ const block = (text, opener) => {
   const remoteCommand = new Function("root", "appViewItem", "nativeSaverItem", "screenSaverItem", "Hyprland", "channelLockItem", "cmd", "number", "by",
                                      block(guideSrc, "function remoteCommand(cmd, number, by, digits) {"))
   const fn = (opener, param) => new Function("root", "bannerTimer", param, block(guideSrc, opener))
-  const open = fn("function openBannerOptions() {", "_"), hide = fn("function hideBanner() {", "_")
+  const open = new Function("root", "bannerTimer", "dvr", block(guideSrc, "function openBannerOptions() {")), hide = fn("function hideBanner() {", "_")
   const move = fn("function moveBannerAct(d) {", "d"), pick = fn("function pickBannerAct(i) {", "i")
   const bannerTimer = { restart() {}, stop() {} }
-  assert.match(guideSrc, /bannerActions: \[\{ key: "multiview",[^\n]*\{ key: "mini",[^\n]*\n\s*\{ key: "guide",[^\n]*\{ key: "mute"/, "the choices, Multiview first")
+  assert.match(block(guideSrc, "readonly property var bannerActions: {"), /return tsActions\.concat\(\[\{ key: "multiview", label: "Multiview", icon: "apps" \}\]\)\.concat\(rec\)\.concat\(\[\{ key: "mini",[^\n]*\n\s*\{ key: "guide",[^\n]*\{ key: "mute"/, "the choices, Multiview first (then a recording's); pause and rewind's before it, while that's on")
   const you = {}, seen = []
   const root = { byUser: you, splash: null, reception: "playing", authBusy: false, dialog: "", appOpening: false, appUp: false,
                  multiview: { active: false }, pip: false, vod: null, opened: true, watching: true, screen: "guide",
@@ -285,8 +287,9 @@ const block = (text, opener) => {
                  bannerActions: [{ key: "multiview" }, { key: "mini" }, { key: "guide" }, { key: "mute" }],
                  surf: d => seen.push("surf " + d), showBanner: () => seen.push("banner"), showGuide: () => seen.push("guide"),
                  openMultiview: () => seen.push("multiview"), goPip: () => seen.push("mini") }
-  root.openBannerOptions = () => open(root, bannerTimer)
+  root.openBannerOptions = () => open(root, bannerTimer, { said: "", checkPlace() {} })
   root.hideBanner = () => hide(root, bannerTimer)
+  root.bannerBack = () => root.hideBanner()
   root.moveBannerAct = d => move(root, bannerTimer, d)
   root.pickBannerAct = i => pick(root, bannerTimer, i)
   const idle = { up: false, settling: false, showing: false, activity() {}, wake() {} }

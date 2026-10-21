@@ -741,15 +741,15 @@ assert.equal(L.bgFloored("image", "", "theme"), false)
     assert.ok(replied.note && replied.note.indexOf("checked and copied first") >= 0, JSON.stringify(replied))
   }
   // settings are saved only once they've been read, and never over a file that couldn't be
-  const saveSettings = new Function("root", "settings", "listings", "videos", "screenSaverItem", "updatesItem", block(guideSrc, "function saveSettings() {"))
+  const saveSettings = new Function("root", "settings", "listings", "videos", "screenSaverItem", "updatesItem", "dvr", block(guideSrc, "function saveSettings() {"))
   let writes = 0
   const settingsFile = { setText() { writes++ } }
   const stand = flags => new Proxy(Object.assign({ pipW: 0, pipRight: 24, pipBottom: 24 }, flags), { get: (t, k) => (k in t ? t[k] : undefined) })
-  saveSettings(stand({ settingsLoaded: false, settingsProblem: "" }), settingsFile, { sources: [] }, {}, { settings: {} }, { on: false, asked: false })
+  saveSettings(stand({ settingsLoaded: false, settingsProblem: "" }), settingsFile, { sources: [] }, {}, { settings: {} }, { on: false, asked: false }, { settings: {} })
   assert.equal(writes, 0, "not before the file's been read: the defaults would go over yours")
-  saveSettings(stand({ settingsLoaded: true, settingsProblem: "Your settings file wasn't read (it's bigger than 1024 KB)" }), settingsFile, { sources: [] }, {}, { settings: {} }, { on: false, asked: false })
+  saveSettings(stand({ settingsLoaded: true, settingsProblem: "Your settings file wasn't read (it's bigger than 1024 KB)" }), settingsFile, { sources: [] }, {}, { settings: {} }, { on: false, asked: false }, { settings: {} })
   assert.equal(writes, 0, "never over a file that couldn't be read")
-  saveSettings(stand({ settingsLoaded: true, settingsProblem: "" }), settingsFile, { sources: [] }, {}, { settings: {} }, { on: false, asked: false })
+  saveSettings(stand({ settingsLoaded: true, settingsProblem: "" }), settingsFile, { sources: [] }, {}, { settings: {} }, { on: false, asked: false }, { settings: {} })
   assert.equal(writes, 1, "once read, saved")
   // and the exact assignments, where the run above can't reach (the helper's three, in both its users)
   for (const name of ["putThemeBackground", "applyTheme"]) {

@@ -63,12 +63,24 @@ Item {
     }
     function indexOf(url) { for (var i = 0; i < channels.length; i++) if (channels[i].url === url) return i; return -1 }
     function airs(ch) { return !!ch }
+    // a channel a recording's provider would stream twice (Recordings)
+    property var secondStreams: ({})
+    property var allowed: []
+    function secondStreamOf(ch) { return !!ch && !!secondStreams[ch.url] }
+    function allowStream(ch) { allowed = allowed.concat([ch.url]) }
     function rollDay() {}
     function airing(ch, t) { return { id: ch.live.id, title: ch.live.title, start: t, end: t + 21600, live: true } }
     function startStreamer() {}
     function liveEnded(r) {}
     function clock(t) { return "9:41 PM" }
     function turnOff() { turnOffs++; view.teardown() }
+    // the TV's pause and rewind buffer (Timeshift.qml): busy while its writer's going; whenGone once it's gone
+    property var pauser: QtObject {
+      property bool busy: false
+      property var waiting: []
+      function whenGone(done) { if (!busy) done(); else waiting = waiting.concat([done]) }
+      function gone() { busy = false; var w = waiting; waiting = []; for (var i = 0; i < w.length; i++) w[i]() }
+    }
     function watch(r) { watched = watched.concat([r]) }
     function dismiss() { dismissed++; turnOff() }
     function showGuide() {}
@@ -275,6 +287,22 @@ Item {
       compare(view.mode, "bar", "in the tiles ▲ works as the key, as before: up to the bar")
     }
 
+    function test_a_2nd_stream_asks_first() {
+      view.start("u/sky")
+      key(Qt.Key_Return); key(Qt.Key_Escape)   // sky, nasa; sound on sky
+      guide.secondStreams = { "u/lofi": true }
+      view.media("next")
+      compare(view.slots[view.sel], "u/sky", "the tile keeps its channel")
+      compare(view.mode, "picker", "the Change channel list opens instead")
+      compare(view.pickMode, "replace")
+      compare(guide.channels[view.pickRows[view.pick]].url, "u/lofi", "on that channel, marked 2nd stream")
+      key(Qt.Key_Return)
+      compare(view.slots[view.sel], "u/lofi", "picked there: it's on")
+      compare(guide.allowed, ["u/lofi"], "and that's a yes for its provider")
+      guide.secondStreams = ({})
+      guide.allowed = []
+    }
+
     function test_next_skips_whats_on_other_tiles() {
       view.start("u/sky")
       key(Qt.Key_Return); key(Qt.Key_Escape)   // sky, nasa; sound on sky
@@ -361,6 +389,24 @@ Item {
       compare(view.lookStep, "", "Multiview closing while you pick: the picker goes")
       compare(guide.multiviewBackground.color, picked, "and what you kept stays")
       compare(guide.focused, 4, "the keys back to the guide")
+    }
+
+    function test_the_tvs_buffer_goes_first() {
+      guide.pauser.busy = true
+      var offs = guide.turnOffs
+      compare(view.start("u/sky"), "ok")
+      verify(guide.turnOffs > offs, "the TV off, its buffer told to go")
+      verify(!view.active, "no tile opens the provider while its writer's still going")
+      guide.pauser.gone()
+      verify(view.active, "then Multiview")
+      compare(urls(), ["u/sky"])
+      view.teardown()
+      guide.pauser.busy = true
+      compare(view.startWith(["u/sky", "u/nasa"]), "ok")
+      verify(!view.active, "an agent's too")
+      guide.pauser.gone()
+      compare(urls(), ["u/sky", "u/nasa"])
+      view.teardown()
     }
 
     function test_an_agents_multiview() {

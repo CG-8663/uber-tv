@@ -123,6 +123,20 @@ Item {
       event.accepted = true
       return
     }
+    if (guide.dialog === "showChoices") {
+      if (k === Qt.Key_Up) guide.moveShowChoice(-1)
+      else if (k === Qt.Key_Down) guide.moveShowChoice(1)
+      else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) guide.showChoiceAct()
+      else if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_I) guide.closeShowChoices()
+      event.accepted = true
+      return
+    }
+    if (guide.dialog === "recStream") {
+      if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Y) guide.answerStream(true)
+      else if (k === Qt.Key_Escape || k === Qt.Key_N || k === Qt.Key_Backspace) guide.answerStream(false)
+      event.accepted = true
+      return
+    }
     if (guide.dialog === "demo") {
       if (k === Qt.Key_Y || k === Qt.Key_Return || k === Qt.Key_Enter) guide.answerDemo(true)
       else if (k === Qt.Key_N || k === Qt.Key_Escape) guide.answerDemo(false)
@@ -232,19 +246,19 @@ Item {
       event.accepted = true
       return
     }
-    // The strip about updates, the first time (Home or the guide): Y turns
-    // update notifications on, N puts it away
-    if (!guide.watching && !guide.updates.asked && (guide.screen === "home" || guide.screen === "guide")
+    // The strip's question, the first time (Home or the guide): update
+    // notifications, then Recordings. Y turns it on, N puts it away (a held
+    // key once)
+    if (!guide.watching && guide.stripAsks !== "" && (guide.screen === "home" || guide.screen === "guide")
         && !guide.managing && !guide.homeEditing && (k === Qt.Key_Y || k === Qt.Key_N)) {
-      if (k === Qt.Key_Y) guide.updates.turnOn()
-      else guide.updates.dismiss()
+      if (!event.isAutoRepeat) guide.stripAnswer(k === Qt.Key_Y)
       event.accepted = true
       return
     }
     // An item's details, over the library or Search
     if (!guide.watching && guide.libDetail && (guide.screen === "library" || guide.screen === "search")) {
       if (k === Qt.Key_Escape || k === Qt.Key_Backspace) guide.libDetail = null
-      else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) guide.libPlay(false)
+      else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) guide.libDetailOk()
       else if (k === Qt.Key_R) guide.libPlay(true)
       else if (k === Qt.Key_L) guide.libToggleList()
       else if (k === Qt.Key_Up) guide.libEpisodeMove(-1)
@@ -465,10 +479,14 @@ Item {
       if (k === Qt.Key_Left) guide.moveBannerAct(-1)
       else if (k === Qt.Key_Right) guide.moveBannerAct(1)
       else if (k === Qt.Key_Return || k === Qt.Key_Enter) guide.pickBannerAct()
-      else if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_Down || k === Qt.Key_I || k === Qt.Key_Space) guide.hideBanner()
+      else if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_Down) guide.bannerBack()
+      else if (k === Qt.Key_I || k === Qt.Key_Space) guide.hideBanner()
       else if (k === Qt.Key_Up || k === Qt.Key_PageUp) { guide.hideBanner(); guide.surf(1) }
       else if (k === Qt.Key_PageDown) { guide.hideBanner(); guide.surf(-1) }
       else if (k === Qt.Key_P) { guide.hideBanner(); guide.goPip() }
+      else if (k === Qt.Key_J) guide.tsKey("back")
+      else if (k === Qt.Key_K) guide.tsKey("pause")
+      else if (k === Qt.Key_L) guide.tsKey("forward")
       else return
     } else if (guide.watching) {
       if (k === Qt.Key_Escape && guide.homeEnabled) guide.turnOff()   // back to Home or the guide, the TV off
@@ -478,6 +496,9 @@ Item {
       else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_G) guide.showGuide()
       else if (k === Qt.Key_I || k === Qt.Key_Space) guide.openBannerOptions()
       else if (k === Qt.Key_P) guide.goPip()
+      else if (k === Qt.Key_J) guide.tsKey("back")      // pause and rewind
+      else if (k === Qt.Key_K) guide.tsKey("pause")
+      else if (k === Qt.Key_L) guide.tsKey("forward")
       else return
     } else {
       if (k === Qt.Key_Escape) guide.homeEnabled ? guide.openHome() : guide.dismiss()
@@ -486,6 +507,7 @@ Item {
       else if (k === Qt.Key_Left) { if (!guide.guideAtLeft() || !guide.openRail()) guide.moveTime(-1) }
       else if (k === Qt.Key_Right) guide.moveTime(1)
       else if (k === Qt.Key_Return || k === Qt.Key_Enter) guide.watch(guide.row)
+      else if (k === Qt.Key_I || k === Qt.Key_Space) guide.openShowChoices()
       else if (k === Qt.Key_V) guide.openLibrary()
       else if (k === Qt.Key_Slash) guide.openSearch()
       else if (k === Qt.Key_R) guide.refresh(true)

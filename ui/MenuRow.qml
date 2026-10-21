@@ -24,7 +24,8 @@ Item {
   signal activated()
 
   readonly property real unit: u * size
-  readonly property var st: focused ? guide.look["menuRow:focused"] : guide.look.menuRow
+  property string element: "menuRow"  // or a part that follows it (recordChoice)
+  readonly property var st: focused ? guide.look[element + ":focused"] || guide.look["menuRow:focused"] : guide.look[element] || guide.look.menuRow
   readonly property var vst: focused ? guide.look["menuValue:focused"] : guide.look.menuValue
   readonly property var sw: on ? guide.look["toggle:on"] : guide.look.toggle
   readonly property color ink: dim && !focused ? guide.dimInk : (st.text ? st.text.color : "white")
@@ -54,6 +55,7 @@ Item {
       color: row.ink
     }
     Label {
+      id: name
       anchors.left: picture.visible ? picture.right : parent.left
       anchors.leftMargin: picture.visible ? row.unit * 0.9 : face.padding
       anchors.right: right.left
@@ -84,12 +86,16 @@ Item {
       Label {
         anchors.verticalCenter: parent.verticalCenter
         visible: text !== ""
-        width: Math.min(implicitWidth, face.width * 0.5)
+        // half the row; a recording choice's note all the room its short name leaves
+        width: Math.min(implicitWidth, row.element !== "recordChoice" ? face.width * 0.5
+                        : Math.max(face.width * 0.5, face.width - face.padding * 2 - row.unit * 2 - name.implicitWidth
+                                                     - (picture.visible ? picture.width + row.unit * 0.9 : 0)))
         text: row.value
         s: row.vst
         unit: row.unit
         color: row.valueInk
-        elide: Text.ElideMiddle
+        // a recording choice's note read from its start; a value (a folder's path) keeps both ends
+        elide: row.element === "recordChoice" ? Text.ElideRight : Text.ElideMiddle
       }
       Label {
         anchors.verticalCenter: parent.verticalCenter

@@ -42,6 +42,7 @@ Item {
   readonly property bool active: session !== null
   readonly property bool closing: active && phase !== "playing"
   property var pendingPlay: null    // a play waiting for the old session to close
+  property var waitingTv: null      // a play waiting for the TV's pause and rewind buffer to be gone
 
   // ---- starting ---------------------------------------------------------
   // value: the helper's play result ({ url (the relay), title, subtitle,
@@ -54,6 +55,21 @@ Item {
       return
     }
     if (!/^http:\/\/127\.0\.0\.1:[0-9]+\/[0-9a-f]{32}\//.test(String(value.url || ""))) return
+    if (guide.pauser && guide.pauser.busy) {
+      // the TV's pause and rewind buffer ends first, its writer gone; something
+      // newer asked for meanwhile (a channel, the TV off, another play, the
+      // app stopping or signing out) wins
+      pb.dropWaiting("")                  // a play waiting before it: never
+      var w = { app: appId, rt: rt, value: value }
+      pb.waitingTv = w
+      guide.turnOff()
+      guide.pauser.whenGone(function() {
+        if (pb.waitingTv === w && rt.phase === "ready") { pb.waitingTv = null; pb.start(appId, rt, value) }
+        else if (pb.waitingTv === w) pb.dropWaiting("")
+      }, function() { if (pb.waitingTv === w) pb.dropWaiting("") })
+      return
+    }
+    pb.waitingTv = null
     guide.turnOff()   // the TV or a video ends first
     pb.epochs += 1
     pb.session = { app: appId, rt: rt, handle: value.session, epoch: pb.epochs, seq: 0, title: value.title || "", subtitle: value.subtitle || "",
@@ -218,7 +234,7 @@ Item {
   function close(reason, then) {
     if (then) pb.after = pb.after.concat([then])
     var s = pb.session
-    if (reason !== "replaced") pb.dropPending()   // stopping, removing, signing out: nothing replaces it
+    if (reason !== "replaced") { pb.dropPending(); pb.dropWaiting("") }   // stopping, removing, signing out: nothing replaces it
     if (!s) { pb.runAfter(); return }
     if (s.state !== "playing") return   // closing already: then waits with the rest
     s.state = "closing"
@@ -270,6 +286,14 @@ Item {
   // A play that waited and won't happen after all: the relay session its
   // app opened for it is closed (it never started, so no report is owed;
   // a runtime that stopped took its relay with it)
+  // A play waiting for the TV's buffer, given up (its app's, or any): its relay closed
+  function dropWaiting(appId) {
+    var w = pb.waitingTv
+    if (!w || (appId && w.app !== appId)) return
+    pb.waitingTv = null
+    if (w.rt.phase === "ready") w.rt.closeRelay(w.value.session)
+  }
+
   function dropPending() {
     var p = pb.pendingPlay
     pb.pendingPlay = null
@@ -298,6 +322,7 @@ Item {
 
   // the runtime stopping on its own: the media stops, and it's said
   function runtimeGone(appId) {
+    pb.dropWaiting(appId)
     if (pb.session && pb.session.app === appId && pb.session.state === "playing") {
       pb.error = "The app stopped, so playback did."
       pb.close("runtime", null)
@@ -322,6 +347,9 @@ Item {
     onTriggered: if (callback) callback()
   }
 
+  // the system's sound output now, followed by the players (as the TV's)
+  MediaDevices { id: audioDevices }
+
   Component {
     id: playerKind
     MediaPlayer {
@@ -332,7 +360,7 @@ Item {
       property bool dead: false
       property bool failedOnce: false
       signal gone()
-      audioOutput: AudioOutput { muted: pb.guide.muted }
+      audioOutput: AudioOutput { device: audioDevices.defaultAudioOutput; muted: pb.guide.muted }
       onMediaStatusChanged: pb.onStatus(mp)
       onPlaybackStateChanged: pb.onState(mp)
       onErrorOccurred: function(error, errorString) { pb.onError(mp, errorString) }

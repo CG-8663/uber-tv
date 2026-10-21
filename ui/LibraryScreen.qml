@@ -93,6 +93,7 @@ Item {
       horizontalAlignment: Text.AlignHCenter
       text: guide.libraryTab === "movies" ? "No movies or series yet" : guide.libraryTab === "ondemand" ? "No YouTube channels yet"
           : guide.libraryTab === "videos" ? (guide.videosScanning ? "Looking for your videos…" : guide.videosMissing ? "That folder isn't there" : "No videos in " + guide.shownPath(guide.videosFolder))
+          : guide.libraryTab === "recordings" ? "No recordings yet"
           : "Nothing in My List yet"
       s: guide.look.boxTitle
       unit: lib.u
@@ -104,6 +105,7 @@ Item {
       text: guide.libraryTab === "movies" ? "Add an M3U playlist with movies or series in it (A in the guide): its video files come here, its live channels go in the guide. Or ask an AI agent to."
           : guide.libraryTab === "ondemand" ? "Every video of your YouTube channels shows here, to watch from the start. Add channels with A in the guide."
           : guide.libraryTab === "videos" ? "Video files you put there (and in the folders inside it) show here: screen recordings, downloads, your own. Settings (,) picks another folder."
+          : guide.libraryTab === "recordings" ? "Watching a channel full screen, press I or Space (▲ on your phone) and pick Record. Recordings go to " + guide.recordingsPlace + "."
           : "L on a movie or a video adds it here."
       s: guide.look.boxText
       unit: lib.u
@@ -127,10 +129,10 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       transformOrigin: Item.Left
       scale: Math.min(1, (footer.width - footer.padding * 2) / Math.max(1, implicitWidth))
-      model: [{ keys: ["↑", "↓", "←", "→"], label: "Move" }, { keys: ["ENTER"], label: "Details" }, { keys: ["SPACE"], label: "Play" },
-              { keys: ["L"], label: "My List" }].concat((guide.libraryRows[guide.libRow] || { key: "" }).key.indexOf("continue") === 0 ? [{ keys: ["X"], label: "Off this row" }] : [])
+      model: [{ keys: ["↑", "↓", "←", "→"], label: "Move" }, { keys: ["ENTER"], label: guide.libraryTab === "recordings" ? "Choices" : "Details" }, { keys: ["SPACE"], label: ["Starting", "Recording", "Saving"].indexOf((guide.libCard || {}).recState) >= 0 ? "Watch live" : "Play" }]
+              .concat(guide.libraryTab === "recordings" ? [] : [{ keys: ["L"], label: "My List" }]).concat((guide.libraryRows[guide.libRow] || { key: "" }).key.indexOf("continue") === 0 ? [{ keys: ["X"], label: "Off this row" }] : [])
               .concat([{ keys: ["TAB"], label: lib.tabs.map(function(t) { return t.key === "movies" ? "Movies" : t.label }).join(" · ") }, { keys: ["/"], label: "Search" }, { keys: ["S"], label: "Style" },
-              { keys: ["?"], label: "All keys" }, { keys: ["ESC"], label: "Guide" }])
+              { keys: ["?"], label: "All keys" }, { keys: ["ESC"], label: "Back" }])
       size: lib.u * 1.55
       capStyle: guide.look.keycap
       labelStyle: guide.look.keyLabel

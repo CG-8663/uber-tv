@@ -112,8 +112,12 @@ Item {
     anchors.fill: parent
   }
 
+  // the system's sound output now, followed as the TV's sound does
+  MediaDevices { id: audioDevices }
+
   AudioOutput {
     id: audio
+    device: audioDevices.defaultAudioOutput
     muted: !!tile.guide.muted
   }
 

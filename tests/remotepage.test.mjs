@@ -13,11 +13,12 @@ const src = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].pop()[1]
 function page() {
   const sent = []
   const els = {}
-  const el = (id) => els[id] || (els[id] = { id, textContent: "", hidden: false, style: {}, dataset: {}, classList: { toggle() {}, add() {}, remove() {} },
+  const el = (id) => els[id] || (els[id] = { id, textContent: "", hidden: false, style: {}, dataset: {}, classes: new Set(),
+    classList: { toggle(c, on) { on ? els[id].classes.add(c) : els[id].classes.delete(c) }, add() {}, remove() {} },
     append(...k) { this.textContent += k.map(x => x.textContent ?? x).join("|") }, appendChild() {}, addEventListener(t, f) { this["on" + t] = f },
     focus() {}, getAttribute() { return null }, setAttribute() {} })
   const digits = [..."0123456789"].map(d => Object.assign(el("digit" + d), { dataset: { digit: d } }))
-  const cmds = ["power", "mute", "up", "down", "left", "right", "ok", "back", "guide", "full", "mini", "chup", "chdown", "options"].map(c => Object.assign(el("cmd" + c), { dataset: { cmd: c } }))
+  const cmds = ["power", "mute", "up", "down", "left", "right", "ok", "back", "guide", "full", "mini", "chup", "chdown", "options", "yes", "no"].map(c => Object.assign(el("cmd" + c), { dataset: { cmd: c } }))
   const timers = []
   const env = {
     document: {
@@ -47,6 +48,7 @@ function page() {
     go: () => els.enter.onclick(),
     wait: () => { const due = timers.splice(0); due.forEach(f => f && f()) },
     shown: () => els.typed.textContent,
+    el: (id) => els[id],
     sent: async () => { await new Promise(r => setImmediate(r)); return sent.splice(0) },
   }
 }
@@ -83,4 +85,24 @@ assert.deepEqual(await p.sent(), [{ cmd: "code", digits: "12345678" }], "at most
 p.press("55")
 p.render({ on: true, channels: [], passcode: false })
 assert.equal(p.shown(), "", "the TV stops asking: what was typed goes")
+// the TV's question (the strip on Home and the guide): TURN ON and DISMISS answer it
+p = page()
+p.render({ on: false, channels: [], ask: { text: "New: Recordings. Record shows to watch later." } })
+assert.equal(p.el("askText").textContent, "New: Recordings. Record shows to watch later.", "the TV's words")
+assert.equal(p.el("ask").classes.has("hidden"), false, "shown")
+p.cmd("yes")
+assert.deepEqual(await p.sent(), [{ cmd: "yes" }], "TURN ON")
+p.cmd("no")
+assert.deepEqual(await p.sent(), [{ cmd: "no" }], "DISMISS")
+p.render({ on: false, channels: [], ask: null })
+assert.equal(p.el("ask").classes.has("hidden"), true, "answered (or the strip's away): gone")
+
+// recording and pause and rewind, as the banner says them
+p = page()
+p.render({ on: true, now: { number: 101, name: "One", title: "News" }, channels: [], rec: "● REC until 9:30 PM", pause: "2:30 behind live" })
+assert.deepEqual([p.el("rec").textContent, p.el("pause").textContent, p.el("dvr").hidden], ["● REC until 9:30 PM", "  ·  2:30 behind live", false])
+p.render({ on: true, now: { number: 101, name: "One", title: "News" }, channels: [], rec: "", pause: "Paused" })
+assert.deepEqual([p.el("rec").textContent, p.el("pause").textContent, p.el("dvr").hidden], ["", "Paused", false])
+p.render({ on: true, now: { number: 101, name: "One", title: "News" }, channels: [] })
+assert.equal(p.el("dvr").hidden, true, "neither: no line")
 console.log("remote page: all good")

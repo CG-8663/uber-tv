@@ -73,6 +73,8 @@ Box {
               : guide.dialog === "reset" || guide.dialog === "restore" ? guide.backups.title(guide.dialog)
               : guide.dialog === "agent" ? "Let AI agents help?"
               : guide.dialog === "demo" ? "Load the demo channels?"
+              : guide.dialog === "recStream" ? "Watch it while recording?"
+              : guide.dialog === "showChoices" ? (guide.showChoice && guide.showChoice.show ? guide.showChoice.show.title || "" : "")
               : guide.dialog === "appsOn" ? "Turn on apps?"
               : guide.dialog === "unknownOn" ? "Turn on third-party apps?"
               : guide.dialog === "devOn" ? "Turn on Developer mode?"
@@ -108,6 +110,10 @@ Box {
                  : guide.updates.notes === "" ? "There are no release notes for version " + guide.updates.notesFor + "."
                  : guide.updates.notesFor !== guide.updates.installed ? "What's new in " + guide.updates.notesFor + "."
                  : "What's in version " + guide.updates.notesFor + ".")
+              : guide.dialog === "recStream"
+              ? guide.streamAskText()
+              : guide.dialog === "showChoices"
+              ? guide.showChoiceText()
               : guide.dialog === "demo"
               ? guide.demoLineup.channels.length + " YouTube channels to start with, in " + guide.demoLineup.categories + " categories: news, weather, space, live cams, music and more. "
                 + "Remove any you don't want, or add your own with A."
@@ -1161,6 +1167,32 @@ Box {
             guide.filterCursor = index
             if (modelData.type === "source") guide.cycleSource(1)
             else guide.toggleFilter(index - guide.sourceRow)
+          }
+        }
+      }
+
+      // ---- a show's choices (I or Space in the guide): Watch, Record or Save video ----
+      Column {
+        visible: guide.dialog === "showChoices"
+        width: parent.width
+        spacing: dialogBox.rowGap
+        Repeater {
+          model: guide.dialog === "showChoices" ? guide.showChoices : []
+          delegate: MenuRow {
+            required property int index
+            required property var modelData
+            guide: dialogBox.guide
+            width: parent.width
+            height: implicitHeight
+            size: dialogBox.rowSize
+            // the recording ones (Record, Record every episode, Cancel, Stop…) as the record choice element
+            element: modelData.key === "watch" ? "menuRow" : "recordChoice"
+            focused: index === guide.showCursor
+            icon: modelData.key === "watch" ? "tv" : ["record", "schedule", "series"].indexOf(modelData.key) >= 0 ? "record" : ""
+            label: modelData.label
+            value: modelData.note || ""
+            dim: modelData.unavailable === true
+            onActivated: { if (guide.showCursor === index) guide.showChoiceAct(index); else guide.showCursor = index }
           }
         }
       }

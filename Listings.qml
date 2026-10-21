@@ -14,7 +14,7 @@ Scope {
   required property var guide
 
   property var sources: []            // [{ url, from: "you"|"playlist", added }]
-  property var shows: ({})            // channel url -> [[start, end, title, description, category]]
+  property var shows: ({})            // channel url -> [[start, end, title, description, category, episode title, episode]]
   property var report: []             // the last fetch: [{ url, ok, error, channels, matched, shows }]
   property real fetched: 0
   property bool busy: false
@@ -29,16 +29,22 @@ Scope {
 
   // A channel's shows overlapping a time span, as the guide's shows
   function between(url, from, to) {
-    var list = listings.shows[url] || []
     var out = []
+    listings.each(url, from, to, function(s) { out.push(listings.show(s)) })
+    return out
+  }
+  // the same, each as it's kept ([start, end, title, desc, category, sub, ep]),
+  // without making a show of it; show(s) makes one
+  function each(url, from, to, visit) {
+    var list = listings.shows[url] || []
     for (var i = 0; i < list.length; i++) {
       var s = list[i]
       if (s[1] <= from) continue
       if (s[0] >= to) break
-      out.push({ epg: true, id: "", title: s[2], desc: s[3], category: s[4], start: s[0], end: s[1] })
+      visit(s)
     }
-    return out
   }
+  function show(s) { return { epg: true, id: "", title: s[2], desc: s[3], category: s[4], start: s[0], end: s[1], sub: s[5] || "", ep: s[6] || "" } }
 
   function at(url, t) {
     var list = listings.shows[url] || []

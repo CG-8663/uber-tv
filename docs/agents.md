@@ -18,6 +18,7 @@ ask in your own words, for example:
 - "Make Jellyfin look like Netflix", "posters for my movies, hide Recently added"
 - "Load the demo channels"
 - "Put 101, 501 and 801 on Multiview, featured, sound from 501"
+- "Record channel 132 for the next two hours", "record every episode of Bake Off", "save my recordings to the USB drive"
 
 The agent does it through the guide's own commands, so nothing is edited
 behind its back. It can make themes of any style and add them to the style
@@ -53,6 +54,35 @@ to four channels (never a locked one), then `multiviewAdd`,
 `multiviewRemove`, `multiviewLayout`, `multiviewSound` and `multiviewClose`;
 `state` says what's on it, and `multiviewBackground` sets what's behind the
 tiles.
+
+**Recordings.** They start off: until you turn them on (a strip asks you
+once, or Settings → Recordings), the recording commands say so, and an agent
+turns them on only when you ask. `record 132 "2h"` records a channel from now (`""`: to its
+show's end plus the end-late minutes, or an hour without listings), `recordShow 132 21:00` schedules
+a later show (IPTV with listings; `shows "" "bake off"` finds one, with the
+day and time to give it), `recordSeries 132 now` records every
+episode of a show, `cancelRecording` cancels a scheduled one or a series
+(only when you ask), `recordUntil` changes when one stops, `stopRecording`
+stops it, `recordings` lists them (the first 300; scheduled ones and series too) with their
+state and why one didn't go as planned, `playRecording` plays one (`startOver` from the start, a movie or video too), and
+`removeRecording` deletes one (only when you ask). `recordingSettings` and
+`setRecordingSettings` are Settings → Recordings: where recordings go (your
+Videos folder, a folder, or a USB drive that's already opened:
+`recordingDrives` lists them), the space kept free, YouTube's quality and
+the padding and how many record at once, and pause and rewind (5 or 30
+minutes, or off); turning Recordings off while one records or is scheduled needs you to say so.
+With pause and rewind on, `pauseLive` pauses the live channel on the TV (or
+resumes it), `seekLive -60` goes back a minute (forward with a positive
+number, as far as its buffer goes), and `goLive` goes back to live; each
+answers whether it's paused, live, and how far behind. They refuse while
+it's off (an agent never turns it on unasked), when no live channel is on,
+or while its buffer can't run, saying why.
+A locked channel is never recorded or played by an agent, and its
+recordings say only *Locked recording* to it. The Recordings parts (the REC
+badge, the Record choice, the cards) are theme parts like the rest
+(`elements`, `setStyle`), Recordings can be a Home row (`setHome`) and a rail
+item (`setRail`), and `libraryTabs` / `setLibraryTabs` order the library's
+tabs.
 
 **Turning it on.** The skill that teaches agents those commands
 (`skills/program-guide/SKILL.md`) is off until you turn it on in Settings
@@ -98,6 +128,9 @@ omarchy-shell om-pg reset undo                    # changed your mind
 omarchy-shell om-pg watch 101
 omarchy-shell om-pg multiview "101,501,801"       # Multiview, the first with the sound
 omarchy-shell om-pg multiviewLayout grid
+omarchy-shell om-pg record 132 "90"               # 90 minutes from now; "" to the show's end plus the end-late minutes
+omarchy-shell om-pg recordShow 132 21:00          # the show on at 9 PM, scheduled
+omarchy-shell om-pg recordings                    # their state, and why one didn't go as planned
 ```
 
 **Claude Code** asks before running each command unless you allow them, in

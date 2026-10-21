@@ -12,6 +12,8 @@ import "Shortcut.js" as Shortcut
 import "Awake.js" as AwakeRules
 import "Saver.js" as SaverRules
 import "ChannelLock.js" as LockRules
+import "Dvr.js" as DvrRules
+import "Timeshift.js" as Ts
 import "ui"
 
 // The guide: a full-screen, old-school program grid of YouTube channels with
@@ -157,11 +159,26 @@ Item {
 
   // Which screen the guide shows: the program guide, or the library (V)
   property string screen: "guide"
-  property string libraryTab: "movies"   // movies, ondemand, videos, mylist
-  // The library's tabs: My Videos only while it's on (Settings)
-  readonly property var libraryTabs: [{ key: "movies", label: "Movies & Series" }, { key: "ondemand", label: "On Demand" }]
-                                     .concat(videos.enabled ? [{ key: "videos", label: "My Videos" }] : [])
-                                     .concat([{ key: "mylist", label: "My List" }])
+  property string libraryTab: "movies"   // movies, ondemand, videos, recordings, mylist
+  // The library's tabs, in their order (yours, or an agent's: setLibraryTabs):
+  // My Videos only while it's on, Recordings while it's on or there are some
+  readonly property var libraryTabKinds: [{ key: "movies", label: "Movies & Series" }, { key: "ondemand", label: "On Demand" },
+                                          { key: "videos", label: "My Videos" }, { key: "recordings", label: "Recordings" }, { key: "mylist", label: "My List" }]
+  property var libraryOrder: []           // tab keys in your order; the rest follow in theirs
+  readonly property var libraryTabs: checkedLibraryOrder(libraryOrder).map(function(k) { return libraryTabKinds.filter(function(t) { return t.key === k })[0] })
+                                     .filter(function(t) { return libraryTabShown(t.key) })
+  function libraryTabShown(key) {
+    return key === "videos" ? videos.enabled : key === "recordings" ? dvr.settings.on || dvr.recordings.length > 0 : true
+  }
+  // Tab keys from settings or a command: known ones once each, in that order, then the others in theirs
+  function checkedLibraryOrder(given) {
+    var known = libraryTabKinds.map(function(t) { return t.key })
+    var out = []
+    var list = Array.isArray(given) ? given : []
+    for (var i = 0; i < list.length; i++) if (known.indexOf(list[i]) >= 0 && out.indexOf(list[i]) < 0) out.push(list[i])
+    for (var k = 0; k < known.length; k++) if (out.indexOf(known[k]) < 0) out.push(known[k])
+    return out
+  }
   property int libRow: 0
   property var libCols: ({})             // row key -> where the cursor was in it
   property var libDetail: null           // the card whose details are open
@@ -210,6 +227,11 @@ Item {
                     cards: ch.items.filter(function(v) { return !root.videoLockedBy(v.id) }).slice(0, 80)
                              .map(function(v) { return root.videoCardFrom("yt:" + v.id, v.title, ch.name, v.id, v.duration) }) })
       }
+    } else if (libraryTab === "recordings") {
+      // what needs you first, then what's recording, then what's recorded
+      var groups = DvrRules.rows(dvr.recordings)
+      for (var gi = 0; gi < groups.length; gi++)
+        rows.push({ key: groups[gi].key, title: groups[gi].title, shape: "thumb", cards: groups[gi].list.map(root.recordingCard) })
     } else if (libraryTab === "videos") {
       var started = library.unfinished("file").map(function(h) {
         var v = videos.item(h.id)
@@ -251,6 +273,133 @@ Item {
     return { id: id, kind: "youtube", title: title, sub: (channelName ? channelName + " · " : "") + (mins ? mins + " min" : ""), videoId: videoId, shape: "wide",
              entry: { id: id, kind: "youtube", title: title, subtitle: channelName || "", poster: "", videoId: videoId, duration: duration || 0,
                       owners: root.videoOwners(videoId, kept.owners), ownersMore: kept.ownersMore === true } }
+  }
+
+  // A recording (DVR.qml), as a card: a locked channel's shows no picture or
+  // description, nor its title while the lock hides titles
+  function recordingCard(rec) {
+    var hide = dvr.hidden(rec)
+    var locked = dvr.locked(rec)
+    var name = (rec.channel || {}).name || ""
+    var title = hide ? "Locked recording" : (rec.titles && rec.titles.length > 1 ? rec.titles.join(" · ") : rec.title || name || "Recording")
+    // one still to come (or missed) goes by its show's times
+    var later = (DvrRules.waiting(rec) || rec.state === "missed") && !!rec.show
+    var when = later ? rec.show.start : rec.started || rec.created || 0
+    var going = DvrRules.active(rec)
+    var sub = hide ? "" : [name, when ? root.dayTime(when) + (later ? " – " + root.clock(rec.show.end) : "") : "",
+                          later ? "" : going ? (rec.kind === "youtube-video" ? "saving" : "until " + root.clock(rec.end)) : root.lengthLabel(rec.duration)].filter(function(x) { return x }).join(" · ")
+    var entry = DvrRules.playable(rec) ? root.recordingEntry(rec, title, hide, locked) : null
+    var from = rec.started || rec.created || 0
+    var ch = locked ? null : dvr.channelOf(rec)
+    return { id: entry ? entry.id : "rec:" + rec.id, kind: "recording", rec: rec, title: title, sub: sub, poster: locked ? "" : (rec.thumb || ""), shape: "wide",
+             logo: ch ? root.logoFor(ch) : "",   // shown until (or without) its picture
+             entry: entry, recState: DvrRules.stateOf(rec), recProgress: going && rec.end > from ? Math.max(0, Math.min(1, (root.now - from) / (rec.end - from))) : 0, when: when }
+  }
+
+  // "Today, 9:00 PM", "Tomorrow, 8:30 AM", "Fri, 9:00 PM", "Oct 19, 9:00 PM"
+  function dayTime(t) {
+    var d = new Date(t * 1000), today = new Date()
+    today.setHours(0, 0, 0, 0)
+    var days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - today) / 86400000)
+    return (days === 0 ? "Today" : days === 1 ? "Tomorrow" : days > 1 && days < 7 ? Qt.formatDateTime(d, "ddd") : Qt.formatDateTime(d, "MMM d")) + ", " + root.clock(t)
+  }
+
+  function recordingEntry(rec, title, hide, locked) {
+    var url = root.fileUrl(rec.path)
+    return { id: library.idFor(url), kind: "file", title: title, subtitle: [hide ? "" : (rec.channel || {}).name, "Recording", root.lengthLabel(rec.duration)].filter(function(x) { return x }).join(" · "),
+             poster: locked ? "" : rec.thumb || "", url: url, duration: rec.duration || 0, description: locked ? "" : rec.desc || "",
+             recId: rec.id, recHash: (rec.channel || {}).hash || "" }
+  }
+
+  // A recording's card from the library or Home: played (a locked channel's
+  // asks for its passcode first), or, while it records, its channel live
+  function playRecording(card, fromStart) {
+    var rec = dvr.byId[card.rec.id] || card.rec
+    if (DvrRules.active(rec)) {
+      var ch = dvr.channelOf(rec)
+      var r = ch ? root.channels.indexOf(ch) : -1
+      if (r < 0) return "that channel isn't in the guide"
+      root.libDetail = null
+      root.row = r
+      root.watch(r)
+      return "ok"
+    }
+    var c = root.recordingCard(rec)
+    if (!c.entry) return "nothing to play"
+    var lockCh = dvr.lockChannelOf(rec)
+    if (lockCh && channelLockItem.blocks(lockCh)) {
+      if (!root.opened) root.summonGuide(false)
+      channelLockItem.askUnlock(lockCh, function() { root.playRecording(card, fromStart) })
+      return "asked for the passcode"
+    }
+    root.libDetail = null
+    root.playVod(c.entry, fromStart ? 0 : undefined)
+    return "ok"
+  }
+
+  // A recording's choices, in its details (OK on its card): ↑ ↓ choose, OK picks
+  property string recArmed: ""            // a recording waiting for its second OK to be deleted
+  readonly property string recordingsPlace: dvr.placeLabel
+  readonly property var recorder: dvr        // for Commands.qml
+  readonly property var libDetailRec: libDetail && libDetail.kind === "recording" ? dvr.byId[libDetail.rec.id] || libDetail.rec : null
+  // its card as it is now (stopped, done), not as it was when its details opened
+  readonly property var libDetailRecCard: libDetailRec ? recordingCard(libDetailRec) : null
+  readonly property var recActions: {
+    var rec = libDetailRec
+    if (!rec) return []
+    var deleting = recArmed === rec.id
+    var series = dvr.ruleOf(rec) ? [{ key: "stopSeries", label: "Stop recording this series" }] : []
+    if (DvrRules.active(rec))
+      return dvr.stopping[rec.id] ? [{ key: "none", label: "Stopping…" }]
+           : rec.kind === "youtube-video" ? [{ key: "stop", label: "Stop saving" }]
+           : [{ key: "watch", label: "Watch live" }, { key: "stop", label: "Stop recording" }].concat(series)
+    // still to come (or a conflict): cancel it, its series, or watch its channel now
+    if (DvrRules.waiting(rec))
+      return [{ key: "cancel", label: "Cancel recording" }].concat(series).concat([{ key: "channel", label: "Watch " + ((rec.channel || {}).name || "the channel") + " now" }])
+    if (rec.state === "missed")
+      return series.concat([{ key: "delete", label: deleting ? "OK again" : "Take it off the list…", danger: true }])
+    if (DvrRules.playable(rec)) {
+      var at = root.libResumeAt(root.recordingCard(rec).id)
+      return [{ key: "play", label: at > 0 ? "Resume" : "Play" }].concat(at > 0 ? [{ key: "start", label: "Start over" }] : []).concat(series)
+             .concat([{ key: "delete", label: deleting ? "OK again to delete it" : "Delete recording…", danger: true }])
+    }
+    if (DvrRules.stateOf(rec) === "Drive missing")
+      return [{ key: "delete", label: deleting ? "OK again (the file stays on the drive)" : "Take it off the list…", danger: true }]
+    return [{ key: "delete", label: deleting ? "OK again to delete it" : "Delete…", danger: true }]
+  }
+  function recAct(i) {
+    var a = root.recActions[i === undefined ? root.libEpisode : i]
+    var rec = root.libDetailRec
+    if (!a || !rec) return
+    if (a.key !== "delete") root.recArmed = ""
+    if (a.key === "play" || a.key === "watch") root.playRecording(root.libDetail, false)
+    else if (a.key === "start") root.playRecording(root.libDetail, true)
+    else if (a.key === "stop") dvr.stop(rec.id)
+    else if (a.key === "cancel") { root.libDetail = null; dvr.cancel(rec.id) }
+    else if (a.key === "stopSeries") {
+      var rule = dvr.ruleOf(rec)
+      if (!rule) return
+      if (DvrRules.waiting(rec)) root.libDetail = null   // still to come, it goes with the series, as Cancel's
+      dvr.stopSeries(rule.id)
+    }
+    else if (a.key === "channel") {
+      var ch = dvr.channelByHash(rec.channel, rec.provider)
+      var r = ch ? root.channels.indexOf(ch) : -1
+      if (r >= 0) { root.libDetail = null; root.row = r; root.watch(r) }
+    }
+    else if (a.key === "delete") {
+      if (root.recArmed !== rec.id) { root.recArmed = rec.id; return }
+      root.recArmed = ""
+      root.libDetail = null
+      dvr.remove(rec.id)
+    }
+  }
+  onLibDetailChanged: { recArmed = ""; if (libDetail && libDetail.kind === "recording") dvr.refresh() }
+
+  // OK (or Enter, Space) in an item's details: a recording's choice, or play
+  function libDetailOk() {
+    if (root.libDetail && root.libDetail.kind === "recording") root.recAct()
+    else root.libPlay(false)
   }
 
   // A video of yours (My Videos), as a card and as something to play
@@ -300,6 +449,7 @@ Item {
     if (root.libraryTabs.some(function(t) { return t.key === tab })) root.libraryTab = tab
     else if (!root.libraryTabs.some(function(t) { return t.key === root.libraryTab })) root.libraryTab = "movies"
     if (root.libraryTab === "videos") videos.freshen()
+    if (root.libraryTab === "recordings") dvr.refresh()
     if (root.screen !== "library") root.libraryFrom = root.screen
     root.screen = "library"
     root.libDetail = null
@@ -326,6 +476,7 @@ Item {
     var tabs = root.libraryTabs.map(function(t) { return t.key })
     root.libraryTab = tabs[(Math.max(0, tabs.indexOf(root.libraryTab)) + d + tabs.length) % tabs.length]
     if (root.libraryTab === "videos") videos.freshen()
+    if (root.libraryTab === "recordings") dvr.refresh()
     root.libRow = 0
     root.libDetail = null
   }
@@ -354,6 +505,11 @@ Item {
   }
 
   function libEpisodeMove(d) {
+    if (root.libDetail && root.libDetail.kind === "recording") {
+      root.libEpisode = Math.max(0, Math.min(root.recActions.length - 1, root.libEpisode + d))
+      if (root.recActions[root.libEpisode] && root.recActions[root.libEpisode].key !== "delete") root.recArmed = ""
+      return
+    }
     if (!root.libDetail || root.libDetail.kind !== "series") return
     root.libEpisode = Math.max(0, Math.min(root.libDetail.episodes.length - 1, root.libEpisode + d))
   }
@@ -363,6 +519,7 @@ Item {
   function libPlay(fromStart) {
     var card = root.libDetail || root.libCard
     if (!card) return
+    if (card.kind === "recording") return root.playRecording(card, fromStart)
     var entry = card.kind === "series" ? root.movieEntry(card.episodes[root.libDetail ? root.libEpisode : 0]) : card.entry
     root.libDetail = null
     root.playVod(entry, fromStart ? 0 : undefined)
@@ -371,7 +528,9 @@ Item {
   function libToggleList() {
     var card = root.libDetail || root.libCard
     if (!card) return
+    if (card.kind === "recording") return   // recordings aren't put on My List (the footer has no L there)
     var entry = card.kind === "series" ? root.movieEntry(card.episodes[root.libEpisode] || card.episodes[0]) : card.entry
+    if (!entry) return
     library.toggleList(entry)
   }
 
@@ -660,7 +819,7 @@ Item {
   readonly property var homeTypes: ({
     doors: "Tiles: Live TV, Movies, On Demand, My Videos, My List", "continue": "Continue watching", onNow: "On now",
     latest: "New on your channels", videos: "New in My Videos", soon: "Starting soon", mylist: "My List", searches: "Your recent searches",
-    apps: "Your apps"
+    apps: "Your apps", recordings: "Your recordings"
   })
   readonly property var defaultHomeSections: [{ type: "doors", on: true }, { type: "continue", on: true }, { type: "onNow", on: true },
                                               { type: "latest", on: true }, { type: "videos", on: true }, { type: "soon", on: true }, { type: "mylist", on: false }]
@@ -720,7 +879,13 @@ Item {
   }
 
   // The sections as shown: [{ key, type, title, shape, cards }], the empty ones left out
+  // Home on screen: not under the splash, a channel full screen or an app's
+  // media, nor with the guide closed. Its rows and cards are worked out only
+  // then: they follow the clock and every listing, on the thread that draws
+  // the picture (the mini player leaves Home showing)
+  readonly property bool homeOnScreen: screen === "home" && opened && !watching && !appPlaying && !splashItem.running
   readonly property var homeView: {
+    if (!homeOnScreen) return []
     var out = []
     for (var i = 0; i < homeSections.length; i++) {
       var sec = homeSections[i]
@@ -785,6 +950,10 @@ Item {
         }
       } else if (sec.type === "videos") {
         if (videos.enabled) cards = videos.items.slice(0, 30).map(root.fileCard)
+      } else if (sec.type === "recordings") {
+        // recording now, then the latest recorded
+        cards = dvr.recordings.filter(function(x) { return DvrRules.active(x) }).concat(dvr.recordings.filter(function(x) { return x.state === "done" }))
+                  .slice(0, 30).map(root.recordingCard)
       } else if (sec.type === "folder") {
         var fl = videos.enabled ? videos.folders.filter(function(x) { return (x.folder || ".") === sec.key })[0] : null
         if (fl) cards = fl.items.slice(0, 200).map(root.fileCard)
@@ -896,7 +1065,8 @@ Item {
     if (!root.vod && root.reception !== "off" && !root.pip && !root.watching) root.turnOff()
     root.screen = "home"
     root.libDetail = null
-    root.homeRow = Math.max(0, Math.min(root.homeRow, root.homeView.length - 1))
+    // (hidden, Home has no rows to measure: the cursor stays where it was)
+    if (root.homeOnScreen) root.homeRow = Math.max(0, Math.min(root.homeRow, root.homeView.length - 1))
     keys.forceActiveFocus()
   }
 
@@ -929,6 +1099,7 @@ Item {
     } else if (c.kind === "search") root.openSearch(c.title)
     else if (c.kind === "app") root.openApp(c.appId)
     else if (c.kind === "appItem" || c.kind === "appStatus") appHomeItem.open(c, root.byUser)
+    else if (c.kind === "recording") root.playRecording(c, false)
     else if (c.entry) root.playVod(c.entry)
   }
 
@@ -967,7 +1138,8 @@ Item {
       var add = [{ type: "header", label: "ADD A ROW" }]
       var have = {}
       for (var a = 0; a < homeSections.length; a++) have[homeSections[a].type + ":" + (homeSections[a].key || "")] = true
-      for (var t in homeTypes) if (t !== "doors" && !have[t + ":"] && (t !== "videos" || videos.enabled) && (t !== "apps" || appsStore.on)) add.push({ type: "add", sec: { type: t, on: true }, label: homeTypes[t] })
+      for (var t in homeTypes) if (t !== "doors" && !have[t + ":"] && (t !== "videos" || videos.enabled) && (t !== "apps" || appsStore.on)
+                                  && (t !== "recordings" || root.libraryTabShown("recordings"))) add.push({ type: "add", sec: { type: t, on: true }, label: homeTypes[t] })
       var appRows = []
       appsStore.ready.forEach(function(ap) {
         ;(ap.kind === "app" ? ap.home || [] : []).forEach(function(h) {
@@ -1348,8 +1520,13 @@ Item {
   property var onAir: null          // { id, title, start, end } of what's playing
   property string reception: "off"  // "off", "tuning", "on" or "lost"
   property bool started: false      // the stream being tuned has been told to play
+  property bool bufferNext: false   // the tune on its way is to watch (pause and rewind's buffer takes it)
   property bool iptvRetried: false  // one retry when an IPTV stream drops
   readonly property bool identUp: reception === "tuning" || reception === "lost" || identHold.running
+  // what the tuning card says (the TV's and the mini player's)
+  readonly property string identStatus: timeshift.stalled ? "stalled"
+                                       : reception === "tuning" ? (vod ? "loading" : timeshift.filling ? "filling" : "tuning")
+                                       : reception === "lost" ? "lost" : ""
   property bool muted: false
   property bool bannerShown: false
   property int port: 0              // the streamer's, once it is up
@@ -1559,6 +1736,7 @@ Item {
   property bool agentSettled: false    // you turned it on or off, or said no: the strip stops asking
   property bool demoAsked: true        // a first start asks, once, about the demo channels
   property bool appsAsked: true        // and about turning apps on
+  property bool recAsked: true         // the strip about Recordings answered, once (new and updated)
   property var skillLinks: []          // where it's linked
   property string skillSaved: ""        // where Save the agent skill put its copy (~ for home)
   property bool skillSaveFailed: false
@@ -1825,6 +2003,8 @@ Item {
     if (!root.airs(ch)) return
     // a locked one shows a lock instead (Enter asks for the passcode)
     if (channelLockItem.blocks(ch)) { if (root.reception !== "off" && !root.pip) root.turnOff(); return }
+    // one from a provider a recording is using waits too (a preview isn't worth a 2nd stream)
+    if (dvr.needsAsk(ch) && !(root.row === root.tunedRow && root.reception !== "off")) { if (root.reception !== "off" && !root.pip) root.turnOff(); return }
     if (root.row === root.tunedRow && (root.reception === "tuning" || root.reception === "on")) return
     root.tune(root.row)
   }
@@ -1834,7 +2014,12 @@ Item {
   // or the mini player (a movie isn't a channel)
   function enforceLock() {
     if (root.multiview) root.multiview.enforceLock()   // a tile on a channel that's locked now stops, sound or not
-    if (root.vod) { if (root.vod.videoId && root.videoLockedBy(root.vod.videoId, root.vod.subtitle, root.vod.owners, root.vod.ownersMore)) root.turnOff(); return }
+    if (root.vod) {
+      if (root.vod.videoId && root.videoLockedBy(root.vod.videoId, root.vod.subtitle, root.vod.owners, root.vod.ownersMore)) root.turnOff()
+      // a recording of a channel that's locked now stops too
+      else if (root.vod.recId && dvr.locked(dvr.byId[root.vod.recId] || { channel: { hash: root.vod.recHash } })) root.turnOff()
+      return
+    }
     if (root.reception === "off" || root.tunedRow < 0) return
     if (channelLockItem.blocks(root.channels[root.tunedRow])) root.turnOff()
   }
@@ -2003,7 +2188,7 @@ Item {
       var c = parsed[i]
       var category = c && typeof c.category === "string" ? c.category.trim().slice(0, 40) : ""
       if (c && c.kind === "iptv" && root.isStreamUrl(c.url)) {
-        list.push(root.iptvChannel(c.name || c.url, c.url, category, c.logo, c.tvgId))
+        list.push(root.iptvChannel(c.name || c.url, c.url, category, c.logo, c.tvgId, c.src))
         continue
       }
       if (!c || !root.isYouTube(c.url)) {
@@ -2049,11 +2234,13 @@ Item {
   }
 
   // An IPTV channel: always live, playing its stream directly. Until there's
-  // a guide for it (EPG), its row is one LIVE block with its name.
-  function iptvChannel(name, url, category, logo, tvgId) {
+  // a guide for it (EPG), its row is one LIVE block with its name. src: the
+  // playlist it came from, as an opaque id (Dvr.js providerOf: two streams
+  // from one provider may be one too many)
+  function iptvChannel(name, url, category, logo, tvgId, src) {
     name = String(name || "").trim().slice(0, 60) || "Channel"
     return {
-      kind: "iptv", name: name, url: url, category: category || "",
+      kind: "iptv", name: name, url: url, category: category || "", src: /^[0-9a-f]{12}$/.test(String(src || "")) ? String(src) : "",
       logo: root.isStreamUrl(logo) ? logo : "", tvgId: String(tvgId || "").slice(0, 100),
       items: [], state: "ready", channelId: "", live: { id: "", title: name }
     }
@@ -2226,6 +2413,8 @@ Item {
       multiview: { background: root.multiviewBackground },
       rail: root.railSetup,
       videos: { enabled: videos.enabled, folder: videos.folder },
+      dvr: dvr.settings,
+      libraryTabs: root.libraryOrder,
       search: { recent: root.recentSearches },
       display: root.displayMode,
       awake: root.awake,
@@ -2239,7 +2428,7 @@ Item {
       theme: root.themeId,
       beforeReset: root.beforeReset,
       agent: { skill: root.agentSkill, asked: root.agentAsked, settled: root.agentSettled },
-      firstStart: { demo: root.demoAsked, apps: root.appsAsked },
+      firstStart: { demo: root.demoAsked, apps: root.appsAsked, recordings: root.recAsked },
       bar: { icon: root.barIcon, shortcut: root.shortcut }
     }, null, 2) + "\n")
   }
@@ -2472,6 +2661,21 @@ Item {
   // with their pictures or descriptions. Everything that shows a channel's
   // shows asks here.
   function titlesHidden(ch) { return channelLockItem.blocks(ch) && !channelLockItem.titles }
+  // for Recordings (DVR.qml): a channel blocked now, and one the lock protects (unlocked or not)
+  function blocksChannel(ch) { return channelLockItem.blocks(ch) }
+  function lockProtects(ch) { return channelLockItem.isLocked(ch) }
+  // the providers Multiview's tiles stream from (a recording may be one stream too many)
+  function multiviewProviders() {
+    if (!root.multiview || !root.multiview.active) return []
+    var out = []
+    var slots = root.multiview.slots || []
+    for (var i = 0; i < slots.length; i++) {
+      var r = root.indexOf(slots[i])
+      var p = r >= 0 ? DvrRules.providerOf(root.channels[r]) : ""
+      if (p) out.push(p)
+    }
+    return out
+  }
 
   // A locked channel's videos (On Demand) are locked with it: which of your
   // YouTube channels each video is on, by its id (one upload can be on
@@ -2593,6 +2797,7 @@ Item {
         c.kind = "iptv"
         if (ch.logo) c.logo = ch.logo
         if (ch.tvgId) c.tvgId = ch.tvgId
+        if (ch.src) c.src = ch.src
       }
       out.push(c)
     }
@@ -3458,7 +3663,8 @@ Item {
     return "https://www.youtube.com/results?search_query=" + encodeURIComponent(name) + "&sp=EgIQAg%253D%253D"
   }
 
-  function addCandidates(found, source) {
+  // origin: where its channels came from, for their provider (source, unless given)
+  function addCandidates(found, source, origin) {
     // the program listings a playlist names come with it (once its channels are in)
     var guides = Array.isArray(found.guides) ? found.guides.slice(0, 5) : []
     // A playlist's movies and episodes (video files) go to the library
@@ -3490,7 +3696,7 @@ Item {
       if (seenStream[cand.url]) continue
       seenStream[cand.url] = true
       if (root.indexOf(cand.url) >= 0) { alreadyStreams++; continue }
-      var entry = root.iptvChannel(cand.name, cand.url, cand.category, cand.logo, cand.tvgId)
+      var entry = root.iptvChannel(cand.name, cand.url, cand.category, cand.logo, cand.tvgId, DvrRules.sourceId(origin !== undefined ? origin : source))
       entry.job = root.jobId
       entry.seq = s0
       streams.push(entry)
@@ -4057,10 +4263,154 @@ Item {
     }
   }
 
+  // A 2nd stream from a provider a recording is using (Dvr.js providerOf):
+  // asked first, once; Watch anyway lasts while that provider's recordings
+  // do. Full screen or the mini player, the banner asks (its choices: Watch
+  // anyway, Stay); elsewhere, a box. then: what to do once it's yes.
+  property var streamAsk: null            // { row, then }
+  // what the banner and the mini player ask
+  readonly property string streamAskLabel: streamAsk ? "Watch " + (numbers[streamAsk.row] || "") + " " + ((channels[streamAsk.row] || {}).name || "") + " anyway" : ""
+  readonly property string streamAskNote: "A 2nd stream from this provider while it records"
+  function streamOk(r, then) {
+    var ch = root.channels[r]
+    if (!ch || (r === root.tunedRow && root.reception !== "off" && root.reception !== "lost")) return true   // already playing it
+    if (!dvr.needsAsk(ch)) return true
+    root.streamAsk = { row: r, then: then }
+    if (root.watching || root.pip) {
+      root.bannerAct = 0
+      root.recStopMenu = false
+      root.bannerOptions = true
+      root.bannerShown = true
+      bannerTimer.restart()
+    } else {
+      if (!root.opened) root.summonGuide(false)
+      root.dialog = "recStream"
+      keys.forceActiveFocus()
+    }
+    return false
+  }
+  function showChoiceText() {
+    var c = root.showChoice
+    if (!c) return ""
+    var ch = root.channels[c.row]
+    var s = c.show
+    var when = s && s.start && s.end && !(ch && ch.live && !s.epg) ? root.clock(s.start) + " – " + root.clock(s.end) : ""
+    var e = c.entry
+    return [(root.numbers[c.row] || "") + " " + (ch ? ch.name : ""), when].filter(function(x) { return x && x.trim() }).join(" · ")
+           + (!e ? (c.later && c.later.why ? "\n\n" + c.later.why : "")
+              : DvrRules.active(e) ? "\n\nRecording now." : e.state === "conflict" ? "\n\n" + dvr.reasonOf(e) : "\n\nScheduled to record.")
+  }
+  function streamAskText() {
+    var to = root.streamAsk ? root.channels[root.streamAsk.row] : null
+    return (to ? to.name : "That channel") + " comes from the same provider as a recording that's running: watching it takes a 2nd stream, and a plan that allows one at a time may stop the recording. "
+           + "Watch anyway, and you won't be asked again while it records."
+  }
+  // for Multiview's Add a channel list: a channel a recording's provider would stream twice
+  function secondStreamOf(ch) { return dvr.needsAsk(ch) }
+
+  // A show's choices in the guide (I or Space, phone ⋯; Enter still
+  // watches): Watch, then recording it: Record (what's on now, to its end
+  // or an hour; a later IPTV show, scheduled), Record every episode (IPTV,
+  // from its listings), Save video (a scheduled YouTube channel's video, the
+  // one picked). One scheduled already: Cancel recording; one recording:
+  // Stop recording; a series': Stop recording this series. A locked
+  // channel's cell hides its show: the passcode first, then it's the show
+  // at that time (as the listings have it) that's recorded.
+  property var showChoice: null          // { row, show, at, offer, later, entry, rule, series }
+  property int showCursor: 0
+  readonly property var showChoices: {
+    var c = showChoice
+    if (!c) return []
+    var out = [{ key: "watch", label: "Watch" }]
+    if (c.entry && DvrRules.active(c.entry)) return out.concat(dvr.stopping[c.entry.id] ? [] : [{ key: "stopRec", label: "Stop recording" }])
+    if (c.entry) out.push({ key: "cancel", label: "Cancel recording" })
+    else if (c.offer) out.push({ key: "record", label: c.offer.label, note: c.offer.note, unavailable: c.offer.unavailable })
+    else if (c.later) out.push({ key: "schedule", label: c.later.label, note: c.later.note })
+    if (c.rule) out.push({ key: "stopSeries", label: "Stop recording this series" })
+    else if (c.series) out.push({ key: "series", label: "Record every episode" })
+    return out
+  }
+  function openShowChoices() {
+    var r = root.row
+    var ch = root.channels[r]
+    if (!ch || !root.airs(ch) || root.screen !== "guide") return
+    var show = root.selected
+    var now = Date.now() / 1000
+    var c = { row: r, show: show, at: root.cursorAt, offer: null, later: null, entry: null, rule: null, series: false }
+    var listed = ch.kind === "iptv" && dvr.settings.on && listings.has(ch.url)
+    if (show && show.locked) {
+      // its show hidden: on now, Record works out what's on once it's
+      // unlocked; later, the show at that time, once the passcode's given
+      var hiddenNow = c.at <= now + 60
+      c.offer = hiddenNow ? dvr.offer(r, null) : null
+      c.later = !hiddenNow && listed ? { label: "Record", note: "" } : null
+      c.series = listed
+    } else {
+      c.entry = dvr.forShow(r, show)
+      c.offer = c.entry ? null : dvr.offer(r, show)
+      c.later = c.entry || c.offer ? null : dvr.laterOffer(r, show)
+      var seriesOk = listed && show && show.epg === true && !!show.title
+      c.rule = (c.entry ? dvr.ruleOf(c.entry) : null) || (seriesOk ? dvr.ruleFor(ch, show.title) : null)
+      c.series = seriesOk
+    }
+    root.showChoice = c
+    root.showCursor = 0
+    root.dialog = "showChoices"
+    keys.forceActiveFocus()
+  }
+  function moveShowChoice(d) { root.showCursor = Math.max(0, Math.min(root.showChoices.length - 1, root.showCursor + d)) }
+  function closeShowChoices() { root.showChoice = null; if (root.dialog === "showChoices") root.dialog = ""; keys.forceActiveFocus() }
+  function showChoiceAct(i) {
+    var a = root.showChoices[i === undefined ? root.showCursor : i]
+    var c = root.showChoice
+    if (!a || !c || a.unavailable) return
+    root.closeShowChoices()
+    // a locked channel's hidden show: the passcode, then the show at that time
+    var visible = function(then) {
+      if (!c.show || !c.show.locked) { then(c.show); return }
+      var ch = root.channels[c.row]
+      var go = function() { var s = ch ? listings.at(ch.url, c.at) : null; if (s) then(s) }
+      if (!root.askToWatch(c.row, go)) go()
+    }
+    if (a.key === "watch") root.watch(c.row)
+    else if (a.key === "record" && c.offer) dvr.record(c.row, null, 0, c.show && !c.show.locked ? c.show : null)
+    else if (a.key === "schedule") visible(function(s) { dvr.schedule(c.row, s) })
+    else if (a.key === "series") visible(function(s) { dvr.recordSeries(c.row, s) })
+    else if (a.key === "cancel" && c.entry) dvr.cancel(c.entry.id)
+    else if (a.key === "stopSeries" && c.rule) dvr.stopSeries(c.rule.id)
+    else if (a.key === "stopRec" && c.entry) dvr.stop(c.entry.id)
+  }
+  // For Commands.qml: whether a channel has listings, and the show listed at
+  // a time (or the next one starting after)
+  function listingsHave(ch) { return !!ch && listings.has(ch.url) }
+  function showListed(ch, at, after) { return at ? listings.at(ch.url, at) : listings.after(ch.url, after) }
+  // a channel's listed shows in a span, visited without making each one (agents' shows)
+  function eachListed(ch, from, to, visit) { listings.each(ch.url, from, to, visit) }
+  function listedShow(s) { return listings.show(s) }
+
+  // A recording's reason, for its details (a conflict naming the others as the lock is now)
+  function recReason(rec) { return dvr.reasonOf(rec) }
+
+  // What a program cell says about its show: "recording", "scheduled", "conflict" or ""
+  function recMark(ch, show) { return dvr.markFor(ch, show) }
+  function allowStream(ch) { dvr.allow(ch) }
+  function answerStream(yes) {
+    var a = root.streamAsk
+    root.streamAsk = null
+    if (root.dialog === "recStream") { root.dialog = ""; keys.forceActiveFocus() }
+    if (root.bannerOptions) root.hideBanner()
+    if (!a) return
+    if (yes) { dvr.allow(root.channels[a.row]); a.then() }
+  }
+
   function watch(r) {
     if (root.askToWatch(r, function() { root.watch(r) })) return
+    if ((r !== root.tunedRow || root.reception === "off" || root.reception === "lost") && !root.streamOk(r, function() { root.watch(r) })) return
     if (r !== root.tunedRow || root.reception === "off" || root.reception === "lost") {
-      if (root.tune(r) !== "ok") return
+      root.bufferNext = true           // watched, so through pause and rewind's buffer from the start
+      var tuned = root.tune(r)
+      root.bufferNext = false
+      if (tuned !== "ok") return
     }
     root.watching = true
     root.showBanner()
@@ -4082,7 +4432,9 @@ Item {
       p = (p + delta + n) % n
       if (root.airs(root.channels[v[p]]) && !channelLockItem.blocks(root.channels[v[p]])) break
     }
-    root.tune(v[p])
+    var to = v[p]
+    if (!root.streamOk(to, function() { root.tune(to); root.pip ? root.showPipBanner() : root.showBanner() })) return
+    root.tune(to)
     root.showBanner()
   }
 
@@ -4214,6 +4566,7 @@ Item {
     if (root.pickFolders) {
       root.pickFolders = false
       if (root.pickArea === "saver") root.setSaver({ folder: f.path })
+      else if (root.pickArea === "recordings") dvr.useFolder(f.path)
       else root.setVideos(true, f.path)
       root.dialog = ""
       keys.forceActiveFocus()
@@ -4269,11 +4622,11 @@ Item {
     { keys: ["SHIFT", "+", "↑", "↓"], label: "Move" }, { keys: ["N"], label: "Rename" }, { keys: ["C"], label: "Category" },
     { keys: ["L"], label: "Lock" }, { keys: ["DEL"], label: "Remove" }, { keys: ["?"], label: "All keys" }, { keys: ["E"], label: "Done" }
   ] : [
-    { keys: ["↑", "↓"], label: "Channel" }, { keys: ["←", "→"], label: "Program" }, { keys: ["ENTER"], label: "Watch" }, { keys: ["V"], label: "Library" },
+    { keys: ["↑", "↓"], label: "Channel" }, { keys: ["←", "→"], label: "Program" }, { keys: ["ENTER"], label: "Watch" }].concat(dvr.settings.on ? [{ keys: ["I"], label: "Record…" }] : []).concat([{ keys: ["V"], label: "Library" },
     { keys: ["/"], label: "Search" }, { keys: ["P"], label: "Mini player" }, { keys: ["W"], label: windowed ? "Full screen" : "Window" }, { keys: ["T"], label: "Phone remote" }, { keys: ["A"], label: "Add" }, { keys: ["E"], label: "Manage" },
     { keys: ["S"], label: "Style" }, { keys: [","], label: "Settings" }, { keys: ["?"], label: "All keys" }, { keys: ["K"], label: "Hide keys" },
     { keys: ["ESC"], label: homeEnabled ? "Home" : "Close" }
-  ]
+  ])
   readonly property var dialogHints: dialog === "remove" ? [{ keys: ["ENTER"], label: "Remove" }, { keys: ["ESC"], label: "Keep" }]
     : dialog === "filter" ? [{ keys: ["↑", "↓"], label: "Move" }, { keys: ["SPACE"], label: "On / off" }].concat(hasIptv ? [{ keys: ["←", "→"], label: "Sources" }] : [])
         .concat([{ keys: ["ENTER"], label: "Show" }, { keys: ["ESC"], label: "Cancel" }])
@@ -4286,6 +4639,8 @@ Item {
     : dialog === "help" ? [{ keys: ["ESC"], label: "Close" }]
     : dialog === "agent" ? [{ keys: ["ENTER"], label: "Turn on" }, { keys: ["N"], label: "No thanks" }, { keys: ["ESC"], label: "Later" }]
     : dialog === "demo" ? [{ keys: ["Y"], label: "Load them" }, { keys: ["N"], label: "No thanks" }]
+    : dialog === "recStream" ? [{ keys: ["ENTER"], label: "Watch anyway" }, { keys: ["ESC"], label: "Stay" }]
+    : dialog === "showChoices" ? [{ keys: ["↑", "↓"], label: "Choose" }, { keys: ["ENTER"], label: "Pick" }, { keys: ["ESC"], label: "Back" }]
     : dialog === "remote" ? (remoteStep === "" ? [{ keys: ["ENTER"], label: "Turn on" }, { keys: ["ESC"], label: "Close" }]
         : remoteStep === "confirm" ? [{ keys: ["ENTER"], label: "Turn on" }, { keys: ["ESC"], label: "Cancel" }]
         : remoteStep === "firewall" ? [{ keys: [], label: "Waiting for your password…" }]
@@ -4321,7 +4676,7 @@ Item {
   readonly property var helpSections: [
     { title: "GUIDE", keys: [
       [["↑", "↓"], "Channel (the preview follows)"], [["←", "→"], "Program, up to 12 hours ahead"],
-      [["PGUP", "PGDN"], "Previous / next category"], [["ENTER"], "Full screen"], [["V"], "Library: movies, series, videos"], [["/"], "Search"], [["H"], "Home"], [["P"], "Mini player"],
+      [["PGUP", "PGDN"], "Previous / next category"], [["ENTER"], "Full screen"], [["I", "/", "SPACE"], "A show's choices: Watch, and Record while Recordings are on"], [["V"], "Library: movies, series, videos, recordings"], [["/"], "Search"], [["H"], "Home"], [["P"], "Mini player"],
       [["F"], "Show categories"], [["A"], "Add channels"], [["O"], "Open a channel list file"],
       [["E"], "Manage channels"], [["DEL"], "Remove a channel"], [["L"], "Logos on / off"],
       [["M"], "Mute"], [["R"], "Refresh listings, re-plan lineups"], [["K"], "Key hints on / off"], [["T"], "Phone remote"],
@@ -4335,15 +4690,17 @@ Item {
       [["C"], "Customize Home"], [["/"], "Search"], [["←"], "At the left edge: the nav rail"], [["C"], "On the open rail: customize it"], [["ESC"], "Close"]
     ] },
     { title: "LIBRARY (V)", keys: [
-      [["↑", "↓", "←", "→"], "Move"], [["ENTER"], "Details"], [["SPACE"], "Play, or resume"], [["L"], "Add to / take off My List"],
-      [["TAB"], "Next tab (1 to 4: go to one)"], [["X"], "Off Continue watching"], [["/"], "Search"], [["V"], "The guide"], [["ESC"], "Back"]
+      [["↑", "↓", "←", "→"], "Move"], [["ENTER"], "Details (Recordings: choices)"], [["SPACE"], "Play, or resume (recording now: watch it live)"], [["L"], "Add to / take off My List"],
+      [["TAB"], "Next tab (a number: go to one)"], [["X"], "Off Continue watching"], [["/"], "Search"], [["V"], "The guide"], [["H"], "Home"], [["ESC"], "Back"]
     ] },
     { title: "PLAYING A MOVIE OR VIDEO", keys: [
-      [["SPACE"], "Pause / play"], [["←", "→"], "Back / ahead 10 s (Shift: 1 min)"], [["HOME"], "From the start"],
-      [["P"], "Mini player"], [["ESC"], "Stop: it remembers where"]
+      [["SPACE", "/", "ENTER", "/", "K"], "Pause / play"], [["←", "→", "/", "J", "L"], "Back / ahead 10 s (Shift: 1 min)"],
+      [["PGUP", "PGDN"], "Ahead / back 10 min"], [["HOME"], "From the start"], [["I", "/", "↑", "/", "↓"], "Show the player bar"],
+      [["P"], "Mini player"], [["ESC", "/", "BACKSPACE"], "Stop: it remembers where"]
     ] },
     { title: "WATCHING FULL SCREEN", keys: [
-      [["↑", "↓"], "Channel up / down"], [["ENTER", "/", "G"], "Back to the guide"], [["I", "/", "SPACE"], "Channel banner"],
+      [["↑", "↓"], "Channel up / down"], [["ENTER", "/", "G"], "Back to the guide"], [["I", "/", "SPACE"], "Channel banner: Multiview, Record, Pause…"],
+      [["J", "K", "L"], "Pause and rewind: back 30 s, pause or resume, forward 30 s (off: they offer Turn on)"],
       [["P"], "Mini player"], [["M"], "Mute"], [["ESC"], "TV off, back"]
     ] },
     { title: "MINI PLAYER (POINT AT IT)", keys: [
@@ -5487,12 +5844,15 @@ Item {
     { key: "general", label: "General", icon: "gear", about: "Home, the nav rail, the key hints, the phone remote, AI agents, and the guide's look." },
     { key: "tv", label: "Live TV", icon: "tv", about: "Channel logos, how lineups are planned, which channels show, and fetching the listings." },
     { key: "library", label: "Library", icon: "film", about: "My Videos, the movies your playlists brought in, Continue watching and My List." },
+    { key: "recordings", label: "Recordings", icon: "record", about: "Recording channels to watch later: where recordings go, the space kept free, YouTube's quality, how many at once, starting early and ending late, and pause and rewind." },
     { key: "apps", label: "Apps", icon: "apps", about: "Apps from other people: Netflix, Hulu and more, each full screen, as on a TV. Off until you turn them on." },
     { key: "saver", label: "Screen saver", icon: "picture", about: "Pictures that fill the screen when nothing's playing and nobody's touched anything for a while, like a TV. The first press brings you back." },
     { key: "about", label: "About", icon: "info", about: "What this is, and where your settings and lists are kept." }
   ].concat(appsStore.developerShown || appsStore.developer   // hidden until you ask for it (Settings → About, OK 7 times), or while it's on
            ? [{ key: "developer", label: "Developer", icon: "pencil", about: "For people making apps: Developer mode, and installing an app you're building." }] : [])
   property int settingsPart: 0
+  // Recordings' part open: its drives listed, and its place looked at
+  onSettingsPartChanged: if ((settingsParts[settingsPart] || {}).key === "recordings") { dvr.listDrives(); dvr.checkPlace() }
   // the Developer part gone (switched off) while you're on it: back to Apps
   onSettingsPartsChanged: {
     if (settingsPart < settingsParts.length) return
@@ -5530,6 +5890,20 @@ Item {
       apps_.push({ key: "unknownSources", label: "Third-party apps", kind: "switch" })
       if (appsStore.unknownSources) apps_.push({ key: "signedAppFile", label: "Install a third-party app", kind: "opens" })
     }
+    var rec_ = [{ key: "recOn", label: "Recordings", kind: "switch" }]
+    if (dvr.settings.on) {
+      rec_.push({ key: "recPlace", label: "Save recordings to", kind: "info" })
+      if (!dvr.placeIsDefault) rec_.push({ key: "recDefault", label: "Use the Videos folder", kind: "action" })
+      rec_.push({ key: "recFolder", label: "Choose a folder…", kind: "opens" })
+      for (var dv = 0; dv < dvr.drives.length; dv++)
+        rec_.push({ key: "recDrive", device: dvr.drives[dv].device, label: "Use " + (dvr.drives[dv].label || "the USB drive") + " (USB)", kind: "action" })
+      rec_.push({ key: "recKeepFree", label: "Keep free", kind: "choice" },
+                { key: "recQuality", label: "YouTube quality", kind: "choice" },
+                { key: "recAtOnce", label: "Recordings at once", kind: "choice" },
+                { key: "recPadding", label: "Start early, end late", kind: "choice" },
+                { key: "recPause", label: "Pause and rewind", kind: "choice" },
+                { key: "recAbout", label: "When recordings run", kind: "info" })
+    }
     var developer_ = [{ key: "developer", label: "Developer mode", kind: "switch" }]
     if (appsStore.developer) developer_.push({ key: "appFile", label: "Install an unsigned app", kind: "opens" },
                                              { key: "resetAll", label: "Reset Uber TV", kind: "opens", danger: true })
@@ -5562,6 +5936,7 @@ Item {
         { key: "demo", label: "Load the demo channels", kind: "action" }
       ],
       library: library_,
+      recordings: rec_,
       apps: apps_,
       developer: developer_,
       saver: [
@@ -5640,7 +6015,8 @@ Item {
   readonly property var railKinds: [{ key: "search", label: "Search", icon: "search" },
                                     { key: "home", label: "Home", icon: "home" }, { key: "tv", label: "Live TV", icon: "tv" },
                                     { key: "movies", label: "Movies & Series", icon: "film" }, { key: "ondemand", label: "On Demand", icon: "play" },
-                                    { key: "videos", label: "My Videos", icon: "folder" }, { key: "mylist", label: "My List", icon: "bookmark" },
+                                    { key: "videos", label: "My Videos", icon: "folder" }, { key: "recordings", label: "Recordings", icon: "record" },
+                                    { key: "mylist", label: "My List", icon: "bookmark" },
                                     { key: "apps", label: "Apps", icon: "apps" }, { key: "settings", label: "Settings", icon: "gear" }]
   readonly property var defaultRailSetup: railKinds.map(function(k) { return { key: k.key, on: true } })
   property var railSetup: defaultRailSetup       // [{ key, on }], in order
@@ -5661,8 +6037,8 @@ Item {
   }
 
   // Whether a part is turned on (so it can be on the rail), and if not, why
-  function railAvailable(key) { return key === "home" ? root.homeEnabled : key === "videos" ? videos.enabled : key === "apps" ? appsStore.on : true }
-  function railOffBecause(key) { return key === "home" ? "Home screen is off" : key === "videos" ? "My Videos is off" : key === "apps" ? "Apps are off" : "" }
+  function railAvailable(key) { return key === "home" ? root.homeEnabled : key === "videos" ? videos.enabled : key === "apps" ? appsStore.on : key === "recordings" ? root.libraryTabShown("recordings") : true }
+  function railOffBecause(key) { return key === "home" ? "Home screen is off" : key === "videos" ? "My Videos is off" : key === "apps" ? "Apps are off" : key === "recordings" ? "Recordings are off" : "" }
 
   // The rail's items from settings or a command, checked: known ones once
   // each, Settings on; parts the list doesn't have yet join where they'd come
@@ -5850,7 +6226,7 @@ Item {
     else if (key === "apps") root.openApps()
     else if (key === "home") root.openHome()
     else if (key === "tv") root.closeLibrary()
-    else if (key === "movies" || key === "ondemand" || key === "videos" || key === "mylist") root.openLibrary(key)
+    else if (key === "movies" || key === "ondemand" || key === "videos" || key === "recordings" || key === "mylist") root.openLibrary(key)
     else if (key === "settings") root.openSettings()
   }
 
@@ -5884,6 +6260,7 @@ Item {
     if (key === "videos") return videos.enabled
     if (key === "skill") return root.agentSkill
     if (key === "saverOn") return screenSaverItem.settings.on
+    if (key === "recOn") return dvr.settings.on
     return false
   }
 
@@ -5930,6 +6307,18 @@ Item {
     if (key === "devHow") return appsStore.developerShown || appsStore.developer ? "In Settings → Developer" : "Press Enter on Uber TV 7 times"
     if (key === "credit") return "W: devsecai.sh"
     if (key === "contributors") return root.contributors.length ? plural(root.contributors.length, "person", "people") : "None yet"
+    if (key === "recOn") return root.settingsArmed === "recOff" ? "Enter again to " + root.recOffWhat() : ""
+    if (key === "recPlace") return dvr.placeLabel + (!dvr.placeInfo ? "" : dvr.placeInfo.problem === "drive" ? " · isn't there" : dvr.placeInfo.free ? " · " + root.sizeLabel(dvr.placeInfo.free) + " free" : "")
+    if (key === "recDrive") {
+      var dr = dvr.drives.filter(function(x) { return x.device === (row || {}).device })[0]
+      var using = dr && dvr.settings.place && dvr.settings.place.removable && dr.mount && dvr.settings.place.mount === dr.mount
+      return !dr ? "" : using ? "In use" : dr.mount ? root.sizeLabel(dr.free) + " free" : "Not opened yet"
+    }
+    if (key === "recKeepFree") return dvr.settings.keepFree ? dvr.settings.keepFree + " GB" : "Auto (" + dvr.keepFreeGB + " GB)"
+    if (key === "recQuality") return dvr.settings.quality ? dvr.settings.quality + "p" : "Auto (" + dvr.quality + "p)"
+    if (key === "recAtOnce") return String(dvr.settings.atOnce)
+    if (key === "recPadding") return DvrRules.paddingLabel(dvr.settings.padding)
+    if (key === "recPause") return Ts.minutesLabel(dvr.settings.timeshift)
     return ""
   }
 
@@ -6011,6 +6400,19 @@ Item {
     if (key === "signedAppFile") return "Pick a signed .tvapp in your home folder. Its developer key and everything it asks for are shown before Install asks for the computer's password. Picking the file contacts nothing." + said
     if (key === "appFile") return "A package (.tar.gz) or an app's folder (pick its app.json). It's checked the same way as the catalog's, and you see what it asks for before it's installed." + said
     if (key === "files") return (root.settingsProblem ? root.settingsProblem + " " : "") + "Your channels (channels.json), settings (settings.json), library (library.json), where you stopped (history.json) and themes (themes/) are kept in ~/.config/om-pg, readable by you. My Videos' pictures are in ~/.cache/om-pg."
+    var recSaid = dvr.said ? " " + dvr.said : ""
+    if (key === "recOn") return "Record what's on to watch later: I or Space while watching (▲ on your phone), then Record. Each recording goes on with Uber TV closed while you're logged in. Off takes Record away; your recordings stay, and so does the Recordings tab while there are some."
+    if (key === "recPlace") return "Recordings are saved in " + root.shownPath(dvr.placeInfo && dvr.placeInfo.path ? dvr.placeInfo.path : (dvr.settings.place && dvr.settings.place.path) || dvr.defaultFolder + "/Uber TV Recordings")
+                                   + ". A drive that isn't plugged in is never swapped for this computer's own disk: the recording doesn't start, and you're told why." + recSaid
+    if (key === "recDefault") return "Save recordings in your Videos folder again (" + root.shownPath(dvr.defaultFolder) + "/Uber TV Recordings)." + recSaid
+    if (key === "recFolder") return "Pick a folder of yours, or one on another disk. Hidden and system folders, Uber TV's own and temporary ones can't hold recordings." + recSaid
+    if (key === "recDrive") return "Save recordings on this USB drive, in an Uber TV Recordings folder; one that isn't opened yet is opened first (no password). FAT and exFAT drives can't keep files private." + recSaid
+    if (key === "recKeepFree") return "A recording stops before the drive gets fuller than this; what's recorded is kept. Auto keeps 8 GB free on a small system disk (under 64 GB), 5 GB anywhere else. Enter picks the next one."
+    if (key === "recQuality") return "The size YouTube recordings are saved at; IPTV channels record as they come. About 3 GB an hour at 1080p, 1 to 2 at 720p. Auto: 720p on a small system disk, 1080p anywhere else. Enter picks the next one."
+    if (key === "recAtOnce") return "How many may record at the same time (1 to 4). Each is another stream (4 to 8 Mbps at 1080p) and about 3 GB an hour on the drive: on a slow connection or a small computer, keep it low. One past it doesn't start; a scheduled one past it is a Conflict. Lowering it doesn't stop one that's recording. Enter picks the next one."
+    if (key === "recPadding") return "With listings, a recording starts this much early and ends this much late, so a show that runs over isn't cut off. Enter picks the next one."
+    if (key === "recPause") return "Pause, go back and catch up while you watch live TV. Keeps the last 5 or 30 minutes on the recordings drive, writing the whole time you watch."
+    if (key === "recAbout") return "Recordings run while you're logged in, whether Uber TV is open or not; not at the login screen, or after you log out. Up to " + dvr.settings.atOnce + " at once (Recordings at once). The files aren't encrypted: the channel lock is Uber TV's, not the files'."
     return ""
   }
 
@@ -6084,6 +6486,8 @@ Item {
       if (row.key === "updateCheck") { updatesItem.check(false); return }
       if (row.key === "backupSave") { backupsItem.save(by); return }
       if (row.key === "skillSave") return root.saveSkill(by)
+      if (row.key === "recDefault") { dvr.useDefault(); return }
+      if (row.key === "recDrive") { dvr.useDrive(row.device); return }
       if (root.settingsArmed !== armKey) { root.settingsArmed = armKey; return }
       root.settingsArmed = ""
       if (row.key === "source") library.remove(library.items.filter(function(it) { return (it.source || "") === row.source }).map(function(it) { return it.id }))
@@ -6104,6 +6508,7 @@ Item {
       else if (row.key === "channelLock") { if (you) channelLockItem.openSettings() }
       else if (row.key === "videosFolder") root.openPicker(false, "videos", true)
       else if (row.key === "saverFolderPick") root.openPicker(false, "saver", true)
+      else if (row.key === "recFolder") root.openPicker(false, "recordings", true)
       else if (row.key === "saverFolder") root.openSaverFolder()
       else if (row.key === "getApps") root.openCatalog(by)
       else if (row.key === "appLooks") appPanelItem.openAll(by)
@@ -6132,6 +6537,17 @@ Item {
     else if (row.key === "shortcut") { root.shortcut = Shortcut.CHOICES[(Shortcut.CHOICES.indexOf(root.shortcut) + 1) % Shortcut.CHOICES.length]; root.saveSettings() }
     else if (row.key === "barIcon") { root.barIcon = !root.barIcon; root.saveSettings() }
     else if (row.key === "videos") root.setVideos(!videos.enabled, "")
+    else if (row.key === "recOn") {
+      // off with recordings running or scheduled: they stop or are cancelled, after a second Enter
+      if (dvr.settings.on && (dvr.active.length || dvr.busy || dvr.hasWaiting) && root.settingsArmed !== "recOff") { root.settingsArmed = "recOff"; return }
+      root.settingsArmed = ""
+      if (dvr.settings.on) dvr.turnOff(); else dvr.set({ on: true })
+    }
+    else if (row.key === "recKeepFree") dvr.set({ keepFree: DvrRules.next([0].concat(DvrRules.KEEP_FREE), dvr.settings.keepFree) })
+    else if (row.key === "recQuality") dvr.set({ quality: DvrRules.next([0].concat(DvrRules.QUALITIES), dvr.settings.quality) })
+    else if (row.key === "recAtOnce") dvr.set({ atOnce: DvrRules.next(DvrRules.AT_ONCE, dvr.settings.atOnce) })
+    else if (row.key === "recPadding") dvr.set({ padding: (dvr.settings.padding + 1) % DvrRules.PADDINGS.length })
+    else if (row.key === "recPause") dvr.set({ timeshift: DvrRules.next(Ts.MINUTES, dvr.settings.timeshift) })
     else if (row.key === "lineup") { root.lineupMode = root.lineupMode === "latest" ? "daily" : "latest"; root.saveSettings() }
     else if (row.key === "skill") root.setAgentSkill(!root.agentSkill)
     else if (row.key === "apps") { if (appsStore.on) appsStore.setOn(false); else root.askApps(by) }
@@ -6190,6 +6606,33 @@ Item {
     root.askAboutAgents()
   }
   onDialogChanged: if (dialog === "" && opened && (!demoAsked || !appsAsked || !agentAsked)) agentAskTimer.restart()
+
+  // The strip across Home and the guide (AskStrip.qml) asks one thing at a
+  // time, each once: update notifications, then (once the updates look's
+  // result has gone) Recordings
+  readonly property string stripAsks: !updatesItem.asked ? "updates"
+                                     : updatesItem.strip === "" && !root.recAsked && !dvr.settings.on ? "recordings" : ""
+  readonly property string stripQuestion: stripAsks === "updates" ? "Updates are off. To get the latest updates, turn on update notifications."
+                                        : stripAsks === "recordings" ? "New: Recordings. Record shows to watch later. Turn on here, or anytime in Settings → Recordings." : ""
+  // where it shows: Home or the guide, nothing over it (a box, Multiview, an
+  // app's video, the splash), not while you watch. The phone's TURN ON and
+  // DISMISS answer it only then
+  readonly property bool stripPlace: opened && !watching && dialog === "" && (screen === "home" || screen === "guide")
+                                     && !managing && !homeEditing && !railEditing && !appPlaying && !(multiview && multiview.active) && !splashItem.running
+  // Y (or Turn on) or N (or Dismiss): Dismiss puts it away for good, the
+  // switch staying in Settings. Not again for a second, so the press (or a
+  // double click) that answered one doesn't answer the next as it shows
+  property real stripAnsweredAt: 0
+  function stripAnswer(yes) {
+    if (Date.now() - root.stripAnsweredAt < 1000) return
+    root.stripAnsweredAt = Date.now()
+    if (root.stripAsks === "updates") yes ? updatesItem.turnOn() : updatesItem.dismiss()
+    else if (root.stripAsks === "recordings") {
+      root.recAsked = true
+      if (yes) dvr.set({ on: true })
+      else root.saveSettings()
+    }
+  }
 
   function answerDemo(load) {
     root.closeDialog()
@@ -6275,18 +6718,81 @@ Item {
   // (← → choose, Enter picks, Esc or ↓ hides). It stays while you choose.
   property bool bannerOptions: false
   property int bannerAct: 0
-  readonly property var bannerActions: [{ key: "multiview", label: "Multiview", icon: "apps" }, { key: "mini", label: "Mini player", icon: "window" },
-                                        { key: "guide", label: "Guide", icon: "tv" }, { key: "mute", label: root.muted ? "Sound on" : "Mute", icon: "" }]
+  // Recording (DVR.qml): the recording on the channel on, what Record would
+  // do there (its note says what to know before it's pressed), and the stop
+  // times, a second row of choices in place of the first
+  readonly property var recOnTuned: dvr.onChannel(channels[tunedRow])
+  readonly property var recOffer: bannerOptions && !recOnTuned && !vod ? dvr.offer(tunedRow) : null
+  // What turning Recordings off does: "stop 1 recording and cancel 3 scheduled"
+  function recOffWhat() {
+    var going = dvr.active.length || (dvr.busy ? 1 : 0)
+    var later = dvr.recordings.filter(DvrRules.waiting).length
+    return [going ? "stop " + going + (going === 1 ? " recording" : " recordings") : "", later ? "cancel " + later + " scheduled" : ""].filter(function(x) { return x }).join(" and ")
+  }
+  property bool recStopMenu: false
+  // J K L with pause and rewind off: the banner says so, with Turn on
+  property bool tsOffMenu: false
+  // Pause and rewind's choices, first (Pause focused): on a live channel
+  // with it on; Pause dimmed, saying why, while it can't run
+  readonly property var tsActions: !watching || vod || !timeshift.turnedOn || !Ts.supported(onAir) ? []
+    : timeshift.active ? [{ key: "tsPause", label: timeshift.paused ? "Resume" : "Pause", icon: "" },
+                          { key: "tsBack", label: "Back 30 s", icon: "" },
+                          { key: "tsForward", label: "Forward 30 s", icon: "" },
+                          { key: "tsLive", label: "Live", icon: "", unavailable: timeshift.atLive }]
+    : [{ key: "tsPause", label: "Pause", icon: "", unavailable: true, note: timeshift.cantPauseText }]
+  readonly property var bannerActions: {
+    if (tsOffMenu) return [{ key: "tsOn", label: "Turn on", icon: "", note: "Pause and rewind is off" }]
+    if (streamAsk) return [{ key: "streamYes", label: streamAskLabel, icon: "", rec: true, note: streamAskNote }, { key: "streamNo", label: "Stay", icon: "" }]
+    if (recStopMenu && recOnTuned)
+      return DvrRules.stopChoices(recOnTuned, onAir && onAir.epg ? onAir.end : 0, now, root.clock).map(function(c) { return { key: "recEnd", end: c.end, label: c.label, rec: true } })
+    var rec = recOnTuned && dvr.stopping[recOnTuned.id] ? [{ key: "recStopping", label: "Stopping…", icon: "", rec: true, unavailable: true }]
+            : recOnTuned ? [{ key: "recStop", label: "Stop recording", icon: "", rec: true,
+                              note: recOnTuned.state === "starting" ? "Starting…" : recOnTuned.sleepUnprotected ? "Sleep protection unavailable" : "" },
+                            { key: "recUntil", label: "Until " + root.clock(recOnTuned.end) + "  ›", icon: "", rec: true }]
+            : recOffer ? [{ key: "record", label: dvr.busy ? "Starting…" : recOffer.label, icon: "record", rec: true, note: dvr.said || recOffer.note, unavailable: recOffer.unavailable }]
+            : []
+    return tsActions.concat([{ key: "multiview", label: "Multiview", icon: "apps" }]).concat(rec).concat([{ key: "mini", label: "Mini player", icon: "window" },
+            { key: "guide", label: "Guide", icon: "tv" }, { key: "mute", label: root.muted ? "Sound on" : "Mute", icon: "" }])
+  }
+  // The REC badge on the banner: the channel on is recording, until when;
+  // on another channel, what's recording (dvr.elsewhere)
+  readonly property string recBadge: recOnTuned ? (dvr.stopping[recOnTuned.id] ? "Stopping…" : recOnTuned.state === "starting" ? "Starting to record…" : "● REC until " + root.clock(recOnTuned.end))
+                                     : dvr.anyActive && !vod ? dvr.elsewhere() : ""
+  // and a word when watching this one and recording another from the same provider
+  readonly property string recNote: !recOnTuned && !vod && tunedRow >= 0 && dvr.anyActive && dvr.sharesProvider(channels[tunedRow]) ? "Watching and recording from this provider: 2 streams" : ""
+  // Record turned into Stop under the cursor: the cursor goes to Until, so a
+  // second Enter doesn't stop what just started
+  readonly property string recOnTunedId: recOnTuned ? recOnTuned.id : ""
+  onRecOnTunedIdChanged: if (recOnTunedId && bannerOptions && !recStopMenu && (bannerActions[bannerAct] || {}).key === "recStop")
+                           bannerAct = Math.max(0, bannerActions.findIndex(function(a) { return a.key === "recUntil" }))
   function openBannerOptions() {
     root.bannerAct = 0
+    root.recStopMenu = false
+    root.tsOffMenu = false
+    dvr.said = ""
     root.bannerOptions = true
     root.bannerShown = true
     bannerTimer.restart()
+    dvr.checkPlace()
   }
   function hideBanner() {
+    root.streamAsk = null
     root.bannerOptions = false
     root.bannerShown = false
+    root.recStopMenu = false
+    root.tsOffMenu = false
     bannerTimer.stop()
+  }
+  // Esc, ↓ or BACK on the banner's choices: out of the stop times first, then away
+  function bannerBack() {
+    if (root.streamAsk) { root.answerStream(false); return }
+    if (root.recStopMenu) {
+      root.recStopMenu = false
+      root.bannerAct = Math.max(0, root.bannerActions.findIndex(function(a) { return a.key === "recUntil" }))
+      bannerTimer.restart()
+      return
+    }
+    root.hideBanner()
   }
   function moveBannerAct(d) {
     root.bannerAct = Math.max(0, Math.min(root.bannerActions.length - 1, root.bannerAct + d))
@@ -6296,10 +6802,55 @@ Item {
     var a = root.bannerActions[i === undefined ? root.bannerAct : i]
     if (!a) return
     if (a.key === "mute") { root.muted = !root.muted; bannerTimer.restart(); return }
+    if (a.key === "tsOn") { root.hideBanner(); dvr.set({ timeshift: 5 }); return }
+    if (a.key.indexOf("ts") === 0) {
+      bannerTimer.restart()
+      if (a.unavailable) return
+      if (a.key === "tsPause") timeshift.togglePause()
+      else if (a.key === "tsBack") timeshift.back()
+      else if (a.key === "tsForward") timeshift.forward()
+      else if (a.key === "tsLive") timeshift.live()
+      return
+    }
+    if (a.key === "record") {
+      bannerTimer.restart()
+      if (!a.unavailable && !dvr.busy) dvr.record(root.tunedRow)
+      return
+    }
+    if (a.key === "streamYes" || a.key === "streamNo") { root.answerStream(a.key === "streamYes"); return }
+    if (a.key === "recStopping") { bannerTimer.restart(); return }
+    if (a.key === "recStop") { if (root.recOnTuned) dvr.stop(root.recOnTuned.id); bannerTimer.restart(); return }
+    if (a.key === "recUntil") { root.recStopMenu = true; root.bannerAct = 0; bannerTimer.restart(); return }
+    if (a.key === "recEnd") {
+      if (root.recOnTuned) dvr.setEnd(root.recOnTuned.id, a.end)
+      root.bannerBack()
+      return
+    }
     root.hideBanner()
     if (a.key === "multiview") root.openMultiview()
     else if (a.key === "mini") root.goPip()
     else if (a.key === "guide") root.showGuide()
+  }
+
+  // J K L while watching a live channel: Back 30 s, Pause or Resume,
+  // Forward 30 s. Off: the banner saying so, with Turn on; on but not
+  // running: the banner's choices, Pause first, saying why
+  function tsKey(what) {
+    if (!root.watching || root.vod) return
+    if (!timeshift.turnedOn) {
+      root.bannerAct = 0
+      root.recStopMenu = false
+      root.tsOffMenu = true
+      root.bannerOptions = true
+      root.bannerShown = true
+      bannerTimer.restart()
+      return
+    }
+    if (!timeshift.active) { root.openBannerOptions(); return }
+    if (what === "pause") timeshift.togglePause()
+    else if (what === "back") timeshift.back()
+    else timeshift.forward()
+    root.showBanner()
   }
 
   // The TV
@@ -6384,7 +6935,7 @@ Item {
   // overtake it: it's not a choice of yours).
   property int mvRequest: 0
   property int mvWaitingFor: -1        // the request on its way, if it's still the latest
-  onAppPlayingChanged: if (appPlaying) mvRequest += 1   // an app's video, chosen since, overtakes it too
+  onAppPlayingChanged: if (appPlaying) { mvRequest += 1; timeshift.end() }   // an app's video, chosen since, overtakes it too (and the TV's buffer goes)
   function requestMultiview() { root.mvRequest += 1; root.mvWaitingFor = root.mvRequest; return root.mvRequest }
   function startMultiview(urls, request) {
     if (request !== root.mvRequest || !root.opened) { if (root.mvWaitingFor === request) root.mvWaitingFor = -1; return "overtaken" }
@@ -6426,6 +6977,8 @@ Item {
   // so only the same stream again is cleared, and set back a moment later.
   function play() {
     if (root.reception !== "tuning" || !root.streamUrl()) return
+    if (timeshift.takes(root.onAir)) { timeshift.tuned(); return }
+    if (timeshift.busy) { timeshift.end(function() { if (root.reception === "tuning" && !timeshift.busy) root.play() }); return }
     if (player.source.toString() === root.streamUrl()) {
       player.source = ""
       reload.restart()
@@ -6436,6 +6989,7 @@ Item {
 
   function turnOff() {
     root.mvRequest += 1        // an agent's Multiview still on its way doesn't start
+    timeshift.end()            // pause and rewind's buffer goes
     multiviewItem.teardown()   // every tile stops too, and nothing restarts one
     if (root.vod) root.leaveVod()
     player.stop()
@@ -6469,6 +7023,7 @@ Item {
       return "ok"
     }
     if (root.vod) root.leaveVod()
+    timeshift.end()            // a video instead of the channel: its buffer goes
     var start = from !== undefined && from !== null ? Math.max(0, Number(from) || 0) : library.resumeAt(entry.id)
     root.vod = entry
     root.vodPaused = false
@@ -6587,6 +7142,7 @@ Item {
   // Also reachable from outside: omarchy-shell shell call marcho78.om-pg goPip x
   function goPip() {
     if (root.opened && !root.watching && root.row !== root.tunedRow && root.askToWatch(root.row, root.goPip)) return "the passcode first"
+    if (root.opened && !root.watching && !root.streamOk(root.row, root.goPip)) return "asked first: a 2nd stream from that provider"
     var idle = root.reception === "off" || root.reception === "lost"
     if (root.opened && !root.watching && (root.row !== root.tunedRow || idle)) {
       if (root.tune(root.row) !== "ok") return "nothing to watch"
@@ -6924,6 +7480,11 @@ Item {
     return {
       on: on, muted: root.muted, screen: root.opened ? root.screen : "",
       passcode: channelLockItem.boxUp && channelLockItem.typing,
+      // the strip's question while it's on the screen (the phone's TURN ON and DISMISS answer it)
+      ask: root.stripAsks !== "" && root.stripPlace ? { text: root.stripQuestion } : null,
+      // as the banner says it: recording (this channel, or another), and pause and rewind
+      rec: on ? root.recBadge : "",
+      pause: on && !vod && timeshift.active ? (timeshift.paused ? "Paused" : timeshift.atLive ? "" : timeshift.chipText) : "",
       mode: root.pip && on ? "mini" : root.watching && on ? "full" : root.opened ? root.screen : "off",
       now: vod ? { vod: true, title: vod.title, name: vod.subtitle || "", paused: root.vodPaused }
          : on && ch ? { number: root.numbers[root.tunedRow], name: ch.name, category: ch.category || "", channelId: ch.channelId || "",
@@ -6946,6 +7507,7 @@ Item {
   // POWER (or a channel number) with the TV off: on, full screen.
   function remotePowerOn(r) {
     if (r < 0) r = root.tunedRow >= 0 ? root.tunedRow : (root.visibleRows[0] || 0)
+    if (!root.streamOk(r, function() { root.remotePowerOn(r) })) return
     root.summonGuide(root.tune(r) === "ok")
   }
 
@@ -6969,6 +7531,11 @@ Item {
     if (root.authBusy) return "the computer's password is being asked for"
     if (channelLockItem.boxUp && by === root.byUser) { channelLockItem.remote(cmd, digits); return }
     if (cmd === "code") return   // a passcode with nothing asking for it
+    // the strip's question (Home or the guide): TURN ON and DISMISS, as Y and N
+    if (cmd === "yes" || cmd === "no") {
+      if (root.stripAsks !== "" && root.stripPlace) root.stripAnswer(cmd === "yes")
+      return
+    }
     // a box that isn't on the screen (the TV's playing, or the guide's away)
     // isn't yours: it goes, and doesn't take the button
     if (root.dialog && root.dialog !== "style" && !root.boxShown()) root.closeDialog()
@@ -6990,6 +7557,7 @@ Item {
       if (i < 0) return
       if (root.askToWatch(i, function() { root.remoteCommand("tune", number, by) })) return
       if (!on && !root.opened) { root.remotePowerOn(i); return }
+      if (!root.streamOk(i, function() { root.remoteCommand("tune", number, by) })) return
       if (root.tune(i) !== "ok") return
       if (root.pip) root.showPipBanner()
       else if (root.watching) root.showBanner()
@@ -7042,9 +7610,26 @@ Item {
     }
     // ⋯ (Options): what C does, on Home and on an app's screen
     if (cmd === "options") {
-      if (!root.opened || root.watching || root.dialog || root.railOpen) return
+      if (root.dialog || root.railOpen) return
+      // as I: the mini player's bar; full screen, the player bar or the banner's choices
+      if (root.pip) { if (!root.streamAsk) root.showPipBanner(); return }
+      if (root.watching) { root.vod ? root.showVodBar() : root.bannerOptions ? root.hideBanner() : root.openBannerOptions(); return }
+      if (!root.opened) return
       if (root.screen === "home" && !root.homeEditing) root.openHomePanel()
+      else if (root.screen === "guide") root.openShowChoices()
       else if (root.screen === "app" && !appViewItem.settingsOpen && !appViewItem.signIn && !appViewItem.editing) appPanelItem.openFor(appViewItem.appId, by)
+      return
+    }
+    if (root.dialog === "showChoices") {   // a show's choices: the d-pad picks, OK says it, BACK closes
+      if (cmd === "up") root.moveShowChoice(-1)
+      else if (cmd === "down") root.moveShowChoice(1)
+      else if (cmd === "ok") root.showChoiceAct()
+      else if (cmd === "back") root.closeShowChoices()
+      return
+    }
+    if (root.dialog === "recStream") {   // a 2nd stream from a recording's provider: OK watches anyway, BACK stays
+      if (cmd === "ok") root.answerStream(true)
+      else if (cmd === "back") root.answerStream(false)
       return
     }
     if (root.dialog && root.dialog !== "remote") {   // a box is open on the TV: BACK closes it
@@ -7058,6 +7643,11 @@ Item {
         root.surf(d)
         if (root.opened && !root.watching) { root.row = root.tunedRow; root.showRow(root.row) }
       }
+      return
+    }
+    if (root.pip && root.streamAsk) {   // the mini player asks (a 2nd stream): OK watches anyway, BACK stays
+      if (cmd === "ok") root.answerStream(true)
+      else if (cmd === "back") root.answerStream(false)
       return
     }
     if (root.vod && (root.watching || root.pip)) {
@@ -7077,7 +7667,7 @@ Item {
       if (cmd === "left") root.moveBannerAct(-1)
       else if (cmd === "right") root.moveBannerAct(1)
       else if (cmd === "ok") root.pickBannerAct()
-      else if (cmd === "down" || cmd === "back") root.hideBanner()
+      else if (cmd === "down" || cmd === "back") root.bannerBack()
     } else if (root.watching) {
       // ▲ opens the banner's choices (the keys' I or Space); ◀ ▶ change channel
       if (cmd === "up") root.openBannerOptions()
@@ -7093,7 +7683,7 @@ Item {
     } else if (root.opened && root.libDetail && (root.screen === "library" || root.screen === "search")) {
       if (cmd === "up") root.libEpisodeMove(-1)
       else if (cmd === "down") root.libEpisodeMove(1)
-      else if (cmd === "ok") root.libPlay(false)
+      else if (cmd === "ok") root.libDetailOk()
       else if (cmd === "back") root.libDetail = null
     } else if (root.opened && root.screen === "search" && !root.railOpen && !root.railEditing) {
       if (cmd === "up") root.moveSearch(-1, 0)
@@ -7171,7 +7761,7 @@ Item {
     } else if (root.opened && root.screen === "library") {
       // The library: OK opens details, then plays; BACK goes back
       if (root.libDetail) {
-        if (cmd === "ok") root.libPlay(false)
+        if (cmd === "ok") root.libDetailOk()
         else if (cmd === "back") root.libDetail = null
         else if (cmd === "up") root.libEpisodeMove(-1)
         else if (cmd === "down") root.libEpisodeMove(1)
@@ -7196,10 +7786,21 @@ Item {
   onOpenedChanged: remoteStateTimer.restart()
   onScreenChanged: remoteStateTimer.restart()
   onVodPausedChanged: remoteStateTimer.restart()
-  onWatchingChanged: remoteStateTimer.restart()
+  onWatchingChanged: {
+    remoteStateTimer.restart()
+    // a channel from the guide's preview (on, or still tuning), now full screen: through pause and rewind's buffer
+    if (watching && timeshift.turnedOn && !timeshift.busy && !vod && (reception === "on" || reception === "tuning") && tunedRow >= 0 && timeshift.takes(onAir)) root.tune(tunedRow)
+  }
   onPipChanged: remoteStateTimer.restart()
   onMutedChanged: remoteStateTimer.restart()
   onChannelsChanged: remoteStateTimer.restart()
+  onRecBadgeChanged: remoteStateTimer.restart()
+  onStripAsksChanged: remoteStateTimer.restart()
+  onStripPlaceChanged: remoteStateTimer.restart()
+  // pause and rewind on the phone: paused, live, or behind (told again when
+  // that moves by 15 s, a seek; not each second)
+  readonly property string remotePause: timeshift.active && !vod ? (timeshift.paused ? "paused" : timeshift.atLive ? "live" : "behind " + Math.round(timeshift.behind / 15000)) : ""
+  onRemotePauseChanged: remoteStateTimer.restart()
   onVisibleRowsChanged: remoteStateTimer.restart()
 
   // Media keys and the bar (MPRIS)
@@ -7256,6 +7857,11 @@ Item {
         root.surf(delta)
         if (!root.watching) { root.row = root.tunedRow; root.showRow(root.row) }
       }
+    } else if (timeshift.active && (cmd === "playpause" || cmd === "play" || cmd === "pause")) {
+      // pause and rewind: its own pause, so its clock and Resume follow
+      if (cmd === "playpause") timeshift.togglePause()
+      else if (cmd === "play") { if (timeshift.paused) timeshift.resume() }
+      else timeshift.pause()
     } else if (cmd === "playpause") {
       if (player.playbackState === MediaPlayer.PlayingState) player.pause()
       else player.play()
@@ -7286,11 +7892,17 @@ Item {
     pipBannerTimer.restart()
   }
 
+  // The system's default sound output: the TV's sound follows it, so
+  // switching outputs is picked up (a sound server that restarts isn't: Qt
+  // keeps its old device list until the shell restarts)
+  MediaDevices { id: audioDevices }
+
   MediaPlayer {
     id: player
     videoOutput: video
-    audioOutput: AudioOutput { muted: root.muted || splashItem.running }
+    audioOutput: AudioOutput { device: audioDevices.defaultAudioOutput; muted: root.muted || splashItem.running }
     onMediaStatusChanged: {
+      if (timeshift.mediaStatus(mediaStatus)) return      // pause and rewind's buffer: its own handling
       if (mediaStatus === MediaPlayer.LoadedMedia && root.reception === "tuning" && root.onAir.vod) {
         // On demand: from where you stopped, or the start
         if (root.onAir.resumeAt > 0) player.position = Math.floor(root.onAir.resumeAt * 1000)
@@ -7342,6 +7954,7 @@ Item {
     }
     onErrorOccurred: function(error, message) {
       console.warn("om-pg: player: " + message)
+      if (timeshift.error()) return                       // the buffer reopens, or plays the channel directly
       root.reception = "lost"
     }
   }
@@ -7407,6 +8020,18 @@ Item {
     id: reload
     interval: 250
     onTriggered: if (root.reception === "tuning" && root.streamUrl()) player.source = root.streamUrl()
+  }
+
+  // Pause and rewind's buffer fills under its own deadline: the watchdog
+  // starts once a playlist is handed to the player
+  function tuneWatch(on) { if (on) tuneWatchdog.restart(); else tuneWatchdog.stop() }
+  // The setting or the place changed: the buffer goes, and the channel on
+  // is tuned again (through a new buffer, or directly)
+  function timeshiftChanged() {
+    if (root.reception === "off" || root.vod || root.tunedRow < 0) return
+    if (!timeshift.busy && !(timeshift.turnedOn && root.watching && Ts.supported(root.onAir))) return
+    var row = root.tunedRow
+    timeshift.end(function() { if (root.reception !== "off" && !root.vod && root.tunedRow === row) root.tune(row) })
   }
 
   // A channel that hasn't started in this long isn't going to.
@@ -7548,7 +8173,7 @@ Item {
   Timer {
     id: bannerTimer
     interval: root.bannerOptions ? 10000 : root.ltSeconds * 1000   // choosing: ten seconds from the last key
-    onTriggered: { root.bannerShown = false; root.bannerOptions = false }
+    onTriggered: { root.bannerShown = false; root.bannerOptions = false; root.recStopMenu = false; root.streamAsk = null }
   }
 
   // yt-dlp, by its path ("--": a URL can never be read as an option, some
@@ -7691,7 +8316,7 @@ Item {
       property string shown: ""
       printErrors: false
       onLoaded: {
-        root.addCandidates(root.findChannels(text()))
+        root.addCandidates(root.findChannels(text()), undefined, file.path)
         Qt.callLater(function() { file.destroy() })
       }
       onLoadFailed: {
@@ -7845,6 +8470,8 @@ Item {
             root.homeSections = hs
           }
         }
+        dvr.settings = DvrRules.checked(saved.dvr)
+        if (Array.isArray(saved.libraryTabs)) root.libraryOrder = root.checkedLibraryOrder(saved.libraryTabs)
         if (saved.background) {
           root.bgFrom = Look.bgProvenance(saved.background.from)
           root.bgImage = typeof saved.background.image === "string" && saved.background.image.charAt(0) === "/" ? saved.background.image : ""
@@ -7869,6 +8496,8 @@ Item {
         // asked already, unless a first start left them for its next open
         root.demoAsked = !(saved.firstStart && saved.firstStart.demo === false)
         root.appsAsked = !(saved.firstStart && saved.firstStart.apps === false)
+        // Recordings asked about once, whether a first start or an update (on already: nothing to ask)
+        root.recAsked = !!(saved.firstStart && saved.firstStart.recordings === true) || dvr.settings.on
         if (saved.agent) {
           root.agentSkill = saved.agent.skill === true
           root.agentAsked = saved.agent.asked === true
@@ -7879,12 +8508,15 @@ Item {
       root.linkSkill()
       videos.scan()
       listings.freshen()
+      dvr.loaded = true
   }
   function settingsMissing() {
       root.settingsLoaded = true
+      dvr.loaded = true
       // a first start: the default theme, and the demo channels and apps to ask about
       root.demoAsked = false
       root.appsAsked = false
+      root.recAsked = false
       root.saveSettings()
       root.putDefaultTheme()
       root.linkSkill()
@@ -7931,6 +8563,35 @@ Item {
   Videos {
     id: videos
     guide: root
+  }
+
+  // Recordings (the DVR): DVR.qml, bin/om-pg-dvr
+  // Pause and rewind: the TV through the rolling buffer (Timeshift.qml)
+  Timeshift {
+    id: timeshift
+    guide: root
+    dvr: dvr
+    player: player
+    onMinutesChanged: root.timeshiftChanged()   // off, on, or 5 ↔ 30: a new buffer
+  }
+  readonly property var pauser: timeshift      // for Commands.qml
+  Connections {
+    target: dvr
+    function onSettingsChanged() {
+      var p = JSON.stringify(dvr.settings.place)
+      if (p !== root.timeshiftPlace) { root.timeshiftPlace = p; if (timeshift.busy) root.timeshiftChanged() }
+    }
+  }
+  property string timeshiftPlace: ""
+  // frames on the TV's picture, for its clock (Qt's position stops where the buffer ended when it opened)
+  Connections { target: video.videoSink; enabled: timeshift.owning; function onVideoFrameChanged() { timeshift.frame() } }
+  Connections { target: pipWindow.video.videoSink; enabled: timeshift.owning; function onVideoFrameChanged() { timeshift.frame() } }
+
+  DVR {
+    id: dvr
+    guide: root
+    listings: listings
+    defaultFolder: videos.defaultFolder
   }
 
   Updates {
@@ -8068,6 +8729,7 @@ Item {
   // Playback of that app (any app, for "") ended in order first, then then()
   function finishAppPlayback(id, reason, then) {
     var s = appPlaybackItem.session
+    appPlaybackItem.dropWaiting(id || "")   // a play still waiting for the TV's buffer: never
     if (s && (!id || s.app === id)) appPlaybackItem.close(reason, then)
     else then()
   }
@@ -8371,11 +9033,12 @@ Item {
         }
       }
 
-      // Home, made while it's open
+      // Home, made only while it's on screen (root.homeOnScreen); its cursor
+      // stays on root
       Loader {
         anchors.fill: parent
         anchors.leftMargin: root.railSpace
-        active: root.screen === "home"
+        active: root.homeOnScreen
         sourceComponent: Component {
           HomeScreen { guide: root }
         }
@@ -8448,7 +9111,7 @@ Item {
       }
 
       // Updates are off (the first time), or what Turn on found: above the key hints
-      UpdateStrip {
+      AskStrip {
         guide: root
         anchors.left: parent.left
         anchors.right: parent.right
@@ -8510,15 +9173,46 @@ Item {
 
         ChannelIdent {
           anchors.fill: parent
-          up: root.reception !== "off" && (root.cardShow ? root.identUp : root.reception === "tuning" || root.reception === "lost")
+          up: root.reception !== "off" && (root.cardShow ? root.identUp : root.reception === "tuning" || root.reception === "lost") || timeshift.stalled
           logo: root.vod ? root.posterFor(root.vod) : root.logoFor(root.channels[root.tunedRow])
           number: root.vod ? "" : root.numbers[root.tunedRow] ? "CH " + root.numbers[root.tunedRow] : ""
           name: root.vod ? root.vod.title : root.channels[root.tunedRow] ? root.channels[root.tunedRow].name : ""
-          status: root.reception === "tuning" ? (root.vod ? "loading" : "tuning") : root.reception === "lost" ? "lost" : ""
+          status: root.identStatus
           unit: root.watching ? root.u * 1.6 : root.u * 0.62
           look: root.look
           alarm: root.colors.alert
           image: root.areaImages.card
+        }
+
+        // the channel under the cursor is from a provider a recording is
+        // using: it waits (Enter asks, then watches)
+        Rectangle {
+          anchors.fill: parent
+          visible: !root.watching && root.screen === "guide" && !channelLockItem.blocks(root.channels[root.row])
+                   && !(root.row === root.tunedRow && root.reception !== "off") && dvr.needsAsk(root.channels[root.row])
+          color: root.colors.preview
+          Column {
+            anchors.centerIn: parent
+            width: parent.width - root.u * 2      // its words wrap inside the preview
+            spacing: root.u * 0.4
+            Icon {
+              anchors.horizontalCenter: parent.horizontalCenter
+              name: "record"
+              size: root.u * 3
+              stroke: 1.6
+              color: root.ink
+            }
+            Text {
+              width: parent.width
+              wrapMode: Text.Wrap
+              horizontalAlignment: Text.AlignHCenter
+              textFormat: Text.PlainText
+              text: "Recording from this provider · ENTER to watch"
+              color: root.ink
+              font.family: root.fonts.body
+              font.pixelSize: root.u * 0.9
+            }
+          }
         }
 
         // the channel under the cursor is locked: a lock, not its picture

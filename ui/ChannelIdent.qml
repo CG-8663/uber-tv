@@ -1,7 +1,8 @@
 import QtQuick
 
 // The card shown when changing channel: the channel's logo (or its initial
-// in a frame), its number and name, and Tuning… or No signal, over a
+// in a frame), its number and name, and Tuning… or No signal (pause and
+// rewind: Starting pause and rewind…, Waiting for the channel…), over a
 // backdrop, styled by the card elements (Look.js). It fades in and out with `up`.
 Item {
   id: ident
@@ -10,7 +11,7 @@ Item {
   property string logo: ""         // an image URL, or "" for the initial
   property string number: ""
   property string name: ""
-  property string status: ""       // "tuning" (or "loading", on demand), "lost", or "" once the picture is on
+  property string status: ""       // "tuning" (or "loading", on demand; "filling", pause and rewind's buffer), "lost", "stalled", or "" once the picture is on
   property real unit: 16           // sizes, from the space it's shown in
   property var look: ({})          // the guide's look, resolved
   property color alarm: "#ff4d4d"  // No signal
@@ -79,7 +80,8 @@ Item {
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
       visible: ident.status !== ""
-      text: ident.status === "lost" ? "No signal" : ident.status === "loading" ? "Loading…" : "Tuning…"
+      text: ident.status === "lost" ? "No signal" : ident.status === "loading" ? "Loading…"
+          : ident.status === "filling" ? "Starting pause and rewind…" : ident.status === "stalled" ? "Waiting for the channel…" : "Tuning…"
       s: ident.look.cardStatus || ({})
       unit: ident.unit
       color: ident.status === "lost" ? ident.alarm : (s.text ? s.text.color : "#9fb0f0")

@@ -131,6 +131,26 @@ check("a long but ordinary description is fine",
       titles(write("long.xml", head + b'<programme channel="cnn.us" start="20261018120000 +0000" stop="20261018130000 +0000"><title>Long</title><desc>'
                    + b"words " * 20000 + b"</desc></programme></tv>")) == (1, ["Long"]))
 
+# ---- an episode's own title and number (Record every episode tells episodes apart by them) ----
+def episodes(xml):
+    _, _, shows = epg.read(write("ep.xml", head + xml + b"</tv>"), epg.Matcher(CHANNELS), START, END, set())
+    return [s[5:] for s in shows.get("http://iptv.example/cnn", [])]
+
+
+show = b'<programme channel="cnn.us" start="20261018120000 +0000" stop="20261018130000 +0000"><title>Bake Off</title>%s</programme>'
+check("an episode's title and number kept: on screen as given",
+      episodes(show % b'<sub-title>Bread Week</sub-title><episode-num system="onscreen">S02E05</episode-num>') == [["Bread Week", "S02E05"]])
+check("XMLTV's zero-based season.episode.part as S3E6",
+      episodes(show % b'<episode-num system="xmltv_ns">2.5.0/1</episode-num>') == [["", "S3E6"]])
+check("XMLTV with a total and no season: E6", episodes(show % b'<episode-num system="xmltv_ns">.5/10.</episode-num>') == [["", "E6"]])
+check("on screen preferred over XMLTV's numbering",
+      episodes(show % b'<episode-num system="xmltv_ns">0.0.</episode-num><episode-num system="onscreen">Ep 1</episode-num>') == [["", "Ep 1"]])
+check("another system's id, named", episodes(show % b'<episode-num system="dd_progid">EP0123.0045</episode-num>') == [["", "dd_progid:EP0123.0045"]])
+check("none: empty", episodes(show % b"") == [["", ""]])
+check("the episode's title still leads the description (as shown)",
+      epg.read(write("ep.xml", head + show % b"<sub-title>Bread Week</sub-title><desc>Loaves.</desc>" + b"</tv>"), epg.Matcher(CHANNELS), START, END, set())[2]
+      ["http://iptv.example/cnn"][0][3] == "Bread Week. Loaves.")
+
 # ---- memory stays flat: each show is let go of once read ----
 many = 200000
 body = (b'<tv><channel id="cnn.us"><display-name>CNN</display-name></channel>'
