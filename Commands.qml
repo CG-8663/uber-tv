@@ -400,7 +400,7 @@ Scope {
       if (guide.recorder.needsAsk(guide.channels[r]))
         return commands.failReply("a recording is using that channel's provider: watching it takes a 2nd stream, and a one-stream plan may stop the recording. Ask the user (the guide asks them when they go to it)")
       if (!guide.opened) guide.guidePip()
-      commands.pendingWatch = r
+      commands.pendingWatch = guide.channels[r].url
       watchSoon.restart()
       return commands.okReply({ channel: commands.channelInfo(r) })
     }
@@ -1475,8 +1475,10 @@ Scope {
     onTriggered: if (commands.pendingPlay) { guide.playVod(commands.pendingPlay, commands.pendingFrom); commands.pendingPlay = null; commands.pendingFrom = undefined }
   }
 
-  // watch, from the command: once the mini player (or the guide) is up
-  property int pendingWatch: -1
+  // watch, from the command: once the mini player (or the guide) is up. The
+  // channel by its address, found again then: a category set or a channel
+  // removed meanwhile moves the rows, and another channel would come on
+  property string pendingWatch: ""
   property var pendingMultiview: null
   Timer {
     id: multiviewSoon
@@ -1492,6 +1494,10 @@ Scope {
   Timer {
     id: watchSoon
     interval: 600
-    onTriggered: if (commands.pendingWatch >= 0) { guide.watch(commands.pendingWatch); commands.pendingWatch = -1 }
+    onTriggered: {
+      var r = guide.indexOf(commands.pendingWatch)
+      commands.pendingWatch = ""
+      if (r >= 0) guide.watch(r)
+    }
   }
 }
