@@ -369,7 +369,8 @@ Scope {
                                           scheduled: guide.recorder.recordings.filter(DvrRules.waiting).length, series: guide.recorder.rules.length },
                             pauseAndRewind: { on: guide.pauser.turnedOn, running: guide.pauser.active, paused: guide.pauser.active && guide.pauser.paused,
                                               behindSeconds: guide.pauser.active && !guide.pauser.atLive ? Math.round(guide.pauser.behind / 1000) : 0 },
-                            settingsProblem: guide.settingsProblem || undefined })
+                            settingsProblem: guide.settingsProblem || undefined,
+                            filesProblem: guide.filesProblem || undefined })
     }
 
     function open(): string {
