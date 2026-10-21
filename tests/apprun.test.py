@@ -297,6 +297,35 @@ app.run()
         self.assertEqual(r["kind"], "error")
         await h.stop()
 
+    async def test_half_a_character_is_still_answered(self):
+        """A lone surrogate (half of a character, which UTF-8 can't carry):
+        the toolkit's text drops it, and an answer it's left in elsewhere is
+        answered as an error, never left to time out and stop the app"""
+        main = """from uber_tv import app, Screen, Row, Item, Message
+@app.home
+def home():
+    return Screen("x", rows=[Row("r", "R", [Item("a", "A", image="https://img.example.com/\\ud800.png")])])
+@app.action
+def action(item, how):
+    return Message("half \\ud800 a character")
+app.run()
+"""
+        old = apprun.DEFAULT_DEADLINE
+        apprun.DEFAULT_DEADLINE = 2.0
+        try:
+            h = Harness(make_app("surrogate", main, perms={"net": ["img.example.com"]}))
+            await h.start()
+            r = await h.call("action", {"item": "a", "action": "go"}, wait=5)
+            self.assertEqual((r["kind"], r["value"]), ("message", {"text": "half a character"}))
+            r = await h.call("home", wait=5)
+            self.assertEqual((r["kind"], r["value"]["code"]), ("error", "crash"), r)
+            r = await h.call("action", {"item": "a", "action": "go"}, wait=5)
+            self.assertEqual(r["kind"], "message", "the app goes on")
+            self.assertEqual(h.rt.state, "ready")
+            await h.stop()
+        finally:
+            apprun.DEFAULT_DEADLINE = old
+
     async def test_deadline_then_stop(self):
         main = "import time\nfrom uber_tv import app\n@app.home\ndef home():\n    time.sleep(30)\napp.run()\n"
         old = dict(apprun.DEADLINES), apprun.DEFAULT_DEADLINE, apprun.GRACE
