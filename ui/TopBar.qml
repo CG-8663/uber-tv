@@ -1,8 +1,8 @@
 import QtQuick
 
 // The masthead as a thin status line (layout.masthead bar): a badge, the
-// guide's name, what's shown and from where, and on the right how old the
-// listings are and the clock. While the AI agent skill is off and you
+// guide's name, what's shown and from where, and on the right what's
+// recording, how old the listings are and the clock. While the AI agent skill is off and you
 // haven't said yes or no, it says so here too.
 Box {
   id: bar
@@ -82,6 +82,15 @@ Box {
       Label { text: "AI agents can theme the guide:"; s: guide.look.barLabel; unit: guide.u }
       Label { text: ", settings"; s: guide.look.barValue; unit: guide.u }
       Label { text: "│"; s: guide.look.barLabel; unit: guide.u }
+    }
+    // what's recording (● Recording CBS News, ● 2 recording)
+    Label {
+      anchors.verticalCenter: parent.verticalCenter
+      visible: guide.recordingNow !== ""
+      text: guide.recordingNow
+      s: guide.look.mastheadRec
+      unit: guide.u
+      sizeFactor: bar.labelSize / Math.max(0.2, guide.look.mastheadRec.text.size)
     }
     Row {
       anchors.verticalCenter: parent.verticalCenter

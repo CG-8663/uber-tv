@@ -3,7 +3,9 @@ import "../Look.js" as Look
 
 // The bar over a movie or video on demand: its picture, title and details,
 // where you are along it, and the keys. Shown for a moment after a key,
-// and all the while it's paused.
+// and all the while it's paused or the pointer is on it. Click or drag
+// along it to go there: the time follows the drag, the picture jumps when
+// you let go.
 Box {
   id: bar
 
@@ -12,6 +14,11 @@ Box {
   readonly property real position: guide.playPosition / 1000
   readonly property real duration: guide.playDuration / 1000
   readonly property var progressStyle: guide.look.vodProgress
+  property real dragAt: -1            // where a drag along it is, in seconds (-1: none)
+  property var dragFor: null          // the video the drag began on: letting go seeks only that one
+  readonly property real shownAt: dragAt >= 0 ? dragAt : position
+  readonly property bool held: scrub.containsMouse || scrub.pressed
+  function atX(x) { return Math.max(0, Math.min(1, x / Math.max(1, track.width))) * duration }
 
   function hms(t) {
     t = Math.max(0, Math.floor(t))
@@ -52,7 +59,7 @@ Box {
         spacing: guide.u * 0.3
         Label {
           width: parent.width
-          text: guide.vod ? guide.vod.title : ""
+          text: guide.vod ? guide.showTitle(guide.vod.title) : ""
           s: guide.look.vodTitle
           unit: guide.u
           elide: Text.ElideRight
@@ -92,9 +99,34 @@ Box {
         Rectangle {
           height: parent.height
           radius: parent.radius
-          width: bar.duration > 0 ? parent.width * Math.min(1, bar.position / bar.duration) : 0
+          width: bar.duration > 0 ? parent.width * Math.min(1, bar.shownAt / bar.duration) : 0
           color: bar.progressStyle.fill && typeof bar.progressStyle.fill === "object" ? bar.progressStyle.fill.from : (bar.progressStyle.fill || "transparent")
         }
+      }
+      // the mark you drag, while the pointer's on the bar
+      Rectangle {
+        visible: bar.held && bar.duration > 0
+        width: guide.u * 1.1
+        height: width
+        radius: width / 2
+        x: track.width * Math.min(1, bar.shownAt / Math.max(1, bar.duration)) - width / 2
+        anchors.verticalCenter: track.verticalCenter
+        color: bar.progressStyle.fill && typeof bar.progressStyle.fill === "object" ? bar.progressStyle.fill.from : (bar.progressStyle.fill || guide.ink)
+      }
+      MouseArea {
+        id: scrub
+        anchors.fill: parent
+        anchors.topMargin: -guide.u * 0.6
+        anchors.bottomMargin: -guide.u * 0.6
+        enabled: bar.duration > 0
+        hoverEnabled: true
+        preventStealing: true
+        cursorShape: Qt.PointingHandCursor
+        onEntered: bar.guide.showVodBar()
+        onPressed: function(mouse) { bar.dragFor = bar.guide.vod; bar.dragAt = bar.atX(mouse.x); bar.guide.showVodBar() }
+        onPositionChanged: function(mouse) { if (pressed) { bar.dragAt = bar.atX(mouse.x); bar.guide.showVodBar() } }
+        onReleased: function(mouse) { var to = bar.atX(mouse.x); var was = bar.dragFor; bar.dragAt = -1; bar.dragFor = null; if (was && bar.guide.vod === was) bar.guide.seekVodTo(to) }
+        onCanceled: { bar.dragAt = -1; bar.dragFor = null }
       }
     }
 
@@ -104,7 +136,7 @@ Box {
       Label {
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        text: bar.hms(bar.position) + (bar.duration > 0 ? " / " + bar.hms(bar.duration) : "")
+        text: bar.hms(bar.shownAt) + (bar.duration > 0 ? " / " + bar.hms(bar.duration) : "")
         s: guide.look.vodTime
         unit: guide.u
       }
@@ -122,7 +154,7 @@ Box {
       Label {
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        text: bar.duration > 0 ? "−" + bar.hms(bar.duration - bar.position) : ""
+        text: bar.duration > 0 ? "−" + bar.hms(bar.duration - bar.shownAt) : ""
         s: guide.look.vodTime
         unit: guide.u
       }

@@ -1,7 +1,7 @@
 import QtQuick
 
-// Across the top: the title (or your logo), what's shown, the clock, and
-// while the AI agent skill is off, a strip offering it. A layout without a
+// Across the top: the title (or your logo), what's shown, what's recording,
+// the clock, and while the AI agent skill is off, a strip offering it. A layout without a
 // masthead still shows the strip, until you've said yes or no.
 Item {
   id: masthead
@@ -57,6 +57,20 @@ Item {
     text: guide.clock(guide.now)
     s: guide.look.clock
     unit: guide.u
+  }
+
+  // What's recording (● Recording CBS News, ● 2 recording), left of the clock
+  Label {
+    id: mastRec
+    visible: guide.layout.masthead === "title" && guide.recordingNow !== ""
+    anchors.right: agentStrip.visible ? agentStrip.left : mastClock.visible ? mastClock.left : parent.right
+    anchors.rightMargin: agentStrip.visible || mastClock.visible ? guide.u * 1.5 : 0
+    anchors.verticalCenter: parent.verticalCenter
+    width: Math.min(implicitWidth, masthead.width * 0.3)
+    text: guide.recordingNow
+    s: guide.look.mastheadRec
+    unit: guide.u
+    elide: Text.ElideRight
   }
 
   // While the AI agent skill is off, and you haven't said yes or no

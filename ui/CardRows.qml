@@ -143,7 +143,7 @@ ListView {
             anchors.fill: parent
             anchors.margins: rowsView.u * 0.8
             visible: picture.status !== Image.Ready && logoPicture.status !== Image.Ready
-            text: card.modelData.title
+            text: guide.showTitle(card.modelData.title)
             s: guide.look.posterTitle
             unit: rowsView.u
             sizeFactor: 1.3
@@ -257,7 +257,7 @@ ListView {
           spacing: rowsView.u * 0.15
           Label {
             width: parent.width
-            text: card.modelData.title
+            text: guide.showTitle(card.modelData.title)
             s: guide.look.posterTitle
             unit: rowsView.u
             elide: Text.ElideRight

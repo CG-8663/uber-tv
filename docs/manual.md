@@ -247,6 +247,9 @@ Playing a movie or video:
 | P              | Mini player                              |
 | Esc            | Stop, back to the library (it remembers where you were) |
 
+With the mouse, click or drag along the player bar to go there: the time
+follows the drag, and the picture jumps when you let go.
+
 Where you stopped is saved every few seconds and when you stop, so it picks
 up there next time (also after a restart). The media keys and the phone
 remote pause and seek too.
@@ -537,8 +540,9 @@ choices. One press records:
 The banner then says **● REC until 9:00**, and its choices become **Stop
 recording** and **Until 9:00 ›**: Enter on that one offers the end of the
 show, 30 minutes more, an hour, two hours, or **Until I stop — 12 h
-maximum** (Esc goes back). Changing channel keeps recording, and other
-channels' banners say what's recording (*● Recording CBS News*).
+maximum** (Esc goes back). Changing channel keeps recording; the guide
+shows what's recording (a red **● REC** beside the channel, and the top
+line).
 
 Anything worth knowing is written on the Record choice before you press it:
 *Uses a 2nd stream from this provider* (some IPTV plans allow one stream at a
@@ -570,8 +574,11 @@ phone) opens its choices. **Enter** still watches.
   isn't scheduled again), and **Stop recording this series**; on one
   recording: **Stop recording**.
 
-The cells say what's happening: **Scheduled**, **● Recording**, or
-**Conflict**. Two shows back to back on one channel become one recording
+The cells say what's happening: **Scheduled**, **● Recording** (in red), or
+**Conflict**. A channel that's recording has a red **● REC** beside its name
+(in the Split-Flap board, in its status column),
+and the top of the guide says what's recording (*● Recording Sky News*, or
+*● 2 recording*). Two shows back to back on one channel become one recording
 (its card names both); a show that would take it past its 12 hours goes on
 in a new recording from there. If a playlist changes a channel's link while
 it records, the recording follows the new one, in the same file.
@@ -721,7 +728,7 @@ does: full screen, the banner's choices (a movie, its player bar); in the
 mini player, its bar.
 
 Under what's on, the phone says what the banner does about recording (*● REC
-until 9:30 PM*, or what's recording on another channel) and pause and rewind
+until 9:30 PM*, on the channel that's recording) and pause and rewind
 (*Paused*, or how far behind live). The strip's question on Home and the
 guide (update notifications, Recordings) shows on the phone too: **TURN ON**
 or **DISMISS** answer it.

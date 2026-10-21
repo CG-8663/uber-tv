@@ -401,14 +401,15 @@ Scope {
     return null
   }
 
-  // Recording now, in a few words, for a channel's banner that isn't the
-  // one recording: "● Recording CBS News", "● 2 recording" (a locked
-  // channel's not named)
+  // Recording now, in a few words, for the top of the guide: "● Recording
+  // CBS News", "● 2 recording" (a locked channel's not named); a video being
+  // saved isn't a channel recording, so it isn't counted
   function elsewhere() {
-    var n = dvr.active.length
+    var live = dvr.active.filter(function(r) { return r.kind !== "youtube-video" })
+    var n = live.length
     if (!n) return ""
     if (n > 1) return "● " + n + " recording"
-    var r = dvr.active[0]
+    var r = live[0]
     return "● Recording " + (r.private || dvr.hidden(r) ? "a locked channel" : (r.channel || {}).name || r.title || "")
   }
 
@@ -740,7 +741,12 @@ Scope {
   // The recording or schedule for a show on the channel at row, or null
   function forShow(row, show) {
     var ch = guide.channels[row]
-    return ch && ch.kind === "iptv" && show ? Dvr.forShow(dvr.recordings, Dvr.hashOf(ch.url), show, Date.now() / 1000) : null
+    if (!ch || !show) return null
+    var now = Date.now() / 1000
+    if (ch.kind === "iptv") return Dvr.forShow(dvr.recordings, Dvr.hashOf(ch.url), show, now)
+    // a YouTube channel: what's recording on it, for the show on now (its
+    // live stream, or its lineup's video); a video being saved isn't one
+    return show.start <= now && now < show.end ? dvr.onChannel(ch) : null
   }
 
   // For the guide's cells: each channel's address -> its shows recording or
@@ -749,7 +755,8 @@ Scope {
     var m = {}
     for (var i = 0; i < recordings.length; i++) {
       var r = recordings[i]
-      if (r.kind !== "iptv" || !(Dvr.active(r) || Dvr.waiting(r))) continue
+      // IPTV's, recording or scheduled; a YouTube live stream's, recording
+      if (!(r.kind === "iptv" && (Dvr.active(r) || Dvr.waiting(r))) && !(r.kind === "youtube-live" && Dvr.active(r))) continue
       var ch = dvr.channelOf(r)
       if (!ch) continue
       if (!m[ch.url]) m[ch.url] = []
@@ -766,6 +773,8 @@ Scope {
     for (var i = 0; list && i < list.length; i++) {
       var m = list[i]
       if (m.state === "recording") {
+        // a LIVE block (no listings): recording now covers it, however short
+        if (show.live && m.from < show.end && m.to > show.start) return m.state
         var covered = Math.min(show.end, m.to) - Math.max(show.start, m.from)
         if (covered >= Math.min(300, (show.end - show.start) / 2)) return m.state
       } else if (show.start === m.from) return m.state

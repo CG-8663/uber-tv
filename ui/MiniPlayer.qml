@@ -123,7 +123,7 @@ PanelWindow {
       Text {
         textFormat: Text.PlainText
         width: parent.width
-        text: guide.streamAsk ? guide.streamAskLabel : guide.nowLabel()
+        text: guide.streamAsk ? guide.streamAskLabel : guide.showTitle(guide.nowLabel())
         color: guide.marquee
         font.family: guide.fonts.body
         font.pixelSize: pipWindow.k * 0.95
@@ -135,7 +135,7 @@ PanelWindow {
         textFormat: Text.PlainText
         width: parent.width
         visible: pipWindow.w >= 360 || !!guide.streamAsk
-        text: guide.streamAsk ? guide.streamAskNote : guide.vod ? guide.vod.subtitle || "" : guide.onAir ? (guide.onAir.live ? "● LIVE  " : "") + guide.onAir.title : ""
+        text: guide.streamAsk ? guide.streamAskNote : guide.vod ? guide.vod.subtitle || "" : guide.onAir ? (guide.onAir.live ? "● LIVE  " : "") + guide.showTitle(guide.onAir.title) : ""
         color: guide.ink
         font.family: guide.fonts.body
         font.pixelSize: pipWindow.k * 0.8

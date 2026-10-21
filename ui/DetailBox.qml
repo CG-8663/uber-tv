@@ -72,7 +72,7 @@ Box {
 
       Label {
         width: parent.width
-        text: details.card ? details.shown.title : ""
+        text: details.card ? guide.showTitle(details.shown.title) : ""
         s: guide.look.boxTitle
         unit: details.u
         sizeFactor: 1.35

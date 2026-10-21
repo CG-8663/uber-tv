@@ -8,6 +8,15 @@ var EPOCH = Date.UTC(2026, 0, 1) / 1000
 var MIN_LENGTH = 5 * 60      // skips Shorts, trailers and clips too short to read in the grid
 var MAX_LENGTH = 4 * 3600    // skips the 8-hour marathons
 
+// A title as Uber TV shows it: YouTube's red circles (🔴), which read like
+// Uber TV's own ● REC, become a · between words, and go at either end. The
+// title itself is kept as it came.
+function cleanTitle(t) {
+  var s = String(t === undefined || t === null ? "" : t)
+  if (s.indexOf("\uD83D\uDD34") < 0) return s
+  return s.replace(/\s*\uD83D\uDD34\s*/g, " · ").replace(/(\s*·\s*){2,}/g, " · ").replace(/^\s*·\s*|\s*·\s*$/g, "").trim()
+}
+
 // The videos in a `yt-dlp --flat-playlist -J` listing that can air.
 function programs(listing) {
   var entries = (listing && listing.entries) || []

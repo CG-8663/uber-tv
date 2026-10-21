@@ -10,24 +10,26 @@ versions (0.2.1…) bring fixes and small additions. 1.0.0 will be the public re
 and id are final (the rename to Uber TV) and the app interface is declared
 stable.
 
-## [0.4.0-beta] - 2026-10-20
+## [0.4.0-beta] - 2026-10-21
 
 ### Added
 
 - **Recordings (DVR).** Off to start with: a strip on Home and the guide asks once (Y turns them on, N dismisses), and the switch is in Settings → Recordings.
-  - **Record now:** Record on a channel's banner (I or Space while watching, ▲ on the phone) records to the show's end plus a couple of minutes (an hour without listings); a scheduled YouTube channel's video is saved whole. The banner says ● REC until when, and its choices stop it or change when it stops (up to 12 hours).
-  - **Later shows:** in the guide, I or Space on a show (⋯ on the phone) offers Record for a later show on an IPTV channel with listings, and Record every episode for its series. The guide's cells say Scheduled, ● Recording or Conflict.
+  - **Record now:** Record on a channel's banner (I or Space while watching, ▲ on the phone) records to the show's end plus a couple of minutes (an hour without listings); a scheduled YouTube channel's video is saved whole. The banner says ● REC until when (only on the channel that's recording), and its choices stop it or change when it stops (up to 12 hours). In the guide, I or Space on a show that's recording offers Stop recording too.
+  - **Later shows:** in the guide, I or Space on a show (⋯ on the phone) offers Record for a later show on an IPTV channel with listings, and Record every episode for its series. The guide's cells say Scheduled, ● Recording (in red) or Conflict; a channel that's recording has a red ● REC beside its name, and the top of the guide says what's recording.
   - Recordings run with Uber TV closed while you're logged in, keep the computer from sleeping, and a notification says when one starts and how it went. One that couldn't start on time (logged out, asleep, off) is Missed.
   - **How many at once:** 2 unless you choose 1 to 4. One too many is a Conflict that names the others, and the Record choice says so before you press it.
   - **Two streams from one provider:** going to another channel from a recording's playlist asks first (Watch anyway, or Stay), on the banner, in a box or in the mini player.
   - **The Recordings tab** in the library, and a Home row and nav rail item: what needs you, recording now, Upcoming, then recorded. Enter opens a recording's choices; Space plays it, or watches its channel live while it records.
   - **Settings → Recordings:** where they go (your Videos folder, a folder or a USB drive), the space kept free, YouTube's quality, how many at once, starting early and ending late.
 - **Pause and rewind** (Settings → Recordings: off to start with, 5 or 30 minutes): a live channel plays through a rolling buffer on the recordings drive. The banner's choices start with Pause, Back 30 s, Forward 30 s and Live; J K L and the media keys work too. The banner says Live, or how far behind you are.
-- **Phone remote:** it shows what's recording and whether the TV is paused or behind live, answers the strip's question (TURN ON, DISMISS), and ⋯ while watching opens the banner's choices.
+- **Phone remote:** it shows when the channel on is recording, and whether the TV is paused or behind live, answers the strip's question (TURN ON, DISMISS), and ⋯ while watching opens the banner's choices.
 - **Agent commands:** `record`, `recordShow`, `recordSeries`, `recordUntil`, `stopRecording`, `cancelRecording`, `recordings`, `playRecording`, `startOver`, `removeRecording`, `shows` (find a show in the listings ahead), `recordingDrives`, `recordingSettings`, `setRecordingSettings`, `pauseLive`, `seekLive`, `goLive`, `libraryTabs` and `setLibraryTabs`; `state` reports Recordings and pause and rewind. Locked channels are refused. New theme parts for recordings and the Live chip.
 
 ### Changed
 
+- **The movie player's bar** can be clicked or dragged to go to a point (the time follows the drag).
+- YouTube's red circles (🔴) in video titles show as a · (or not at all at either end), so a red dot in the guide only ever means recording.
 - My Videos leaves the recordings folder out.
 - Program listings keep each show's episode title and number.
 - Home is built only while it's on screen, so the picture no longer stutters while listings load.
@@ -35,6 +37,7 @@ stable.
 
 ### Fixed
 
+- **The Keys box (?)** shows every line in full: long ones go on to a second line, and keys no longer run over their labels.
 - **A theme's Multiview background is kept when the theme is saved.** `addTheme` stored it but also listed `multiview` as ignored, so a follow-up that dropped ignored keys removed it. By [@calledtoconstruct](https://github.com/calledtoconstruct) (#3).
 
 ## [0.3.0-beta] - 2026-10-19

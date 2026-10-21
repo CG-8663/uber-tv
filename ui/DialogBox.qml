@@ -201,58 +201,67 @@ Box {
         }
       }
 
-      // ---- the key list, in three columns ----
+      // ---- the key list, in three columns (the guide; Home to watching;
+      // the rest). Each section's keys are as wide as its widest; a long
+      // line goes on to the next rather than being cut ----
       Row {
         visible: guide.dialog === "help"
         width: parent.width
         spacing: dialogBox.u * 2.4
 
         Repeater {
-          model: guide.dialog === "help" ? [guide.helpSections.slice(0, 1), guide.helpSections.slice(1, 4), guide.helpSections.slice(4)] : []
+          model: guide.dialog === "help" ? [guide.helpSections.slice(0, 1), guide.helpSections.slice(1, 5), guide.helpSections.slice(5)] : []
           delegate: Column {
+            id: helpColumn
             required property var modelData
             width: (parent.width - dialogBox.u * 4.8) / 3
             spacing: dialogBox.u * 0.9
 
             Repeater {
-              model: parent.modelData
+              model: helpColumn.modelData
               delegate: Column {
+                id: helpSection
                 required property var modelData
-                width: parent.width
+                width: helpColumn.width
                 spacing: dialogBox.u * 0.2
+                property real keysWidth: dialogBox.u * 8.6   // grows to the section's widest keys
 
                 Label {
-                  text: parent.modelData.title
+                  text: helpSection.modelData.title
                   s: guide.look.menuHeader
                   unit: dialogBox.u
                   sizeFactor: 1.1
                 }
                 Repeater {
-                  model: parent.modelData.keys
+                  model: helpSection.modelData.keys
                   delegate: Row {
+                    id: helpRow
                     required property var modelData
                     spacing: dialogBox.u * 0.6
                     Item {
-                      width: dialogBox.u * 8.6
-                      height: dialogBox.u * 1.75
+                      width: helpSection.keysWidth
+                      height: Math.max(dialogBox.u * 1.75, helpText.implicitHeight)
                       KeyHints {
+                        id: helpKeys
                         anchors.verticalCenter: parent.verticalCenter
-                        model: [{ keys: parent.parent.modelData[0], label: "" }]
+                        model: [{ keys: helpRow.modelData[0], label: "" }]
                         size: dialogBox.u * 1.4
                         capStyle: guide.look.keycap
                         labelStyle: guide.look.keyLabel
                         labelColor: guide.ink
+                        onImplicitWidthChanged: if (implicitWidth + dialogBox.u * 0.4 > helpSection.keysWidth) helpSection.keysWidth = implicitWidth + dialogBox.u * 0.4
                       }
                     }
                     Label {
+                      id: helpText
                       anchors.verticalCenter: parent.verticalCenter
-                      width: (box.width - dialogBox.u * 4.8) / 3 - dialogBox.u * 9.2
-                      text: parent.modelData[1]
+                      width: helpSection.width - helpSection.keysWidth - helpRow.spacing
+                      text: helpRow.modelData[1]
                       s: guide.look.boxText
                       unit: dialogBox.u
                       sizeFactor: 1.08
-                      color: parent.modelData[0].length ? guide.ink : guide.dimInk
-                      elide: Text.ElideRight
+                      color: helpRow.modelData[0].length ? guide.ink : guide.dimInk
+                      wrapMode: Text.WordWrap
                     }
                   }
                 }

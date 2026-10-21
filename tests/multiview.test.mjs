@@ -35,7 +35,7 @@ const block = (text, opener) => {
   const tile = { onAir: { id: "abc", title: "The news", live: true } }
   const multiview = { active: true, sel: 2, paused: false, tileIn: s => (s === 2 ? tile : {}), rowOf: () => 0 }
   const root = { port: 1234, reception: "off", onAir: null, vod: null, tunedRow: -1, numbers: [101],
-                 channels: [{ name: "Sky News", category: "News", channelId: "UC1" }], multiview: multiview }
+                 channels: [{ name: "Sky News", category: "News", channelId: "UC1" }], multiview: multiview, showTitle: t => t }
   sendMpris(root, streamer, player, MediaPlayer)
   assert.equal(written[0].active, true, "the TV's player is off, but Multiview is playing: still active")
   assert.equal(written[0].status, "Playing")

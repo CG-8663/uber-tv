@@ -222,7 +222,7 @@ assert.match(dvrQml, /r\.start\(\["\/usr\/bin\/python3", "-I", dvr\.helper\]\.co
   assert.deepEqual(order(kinds, ["recordings", "nope", "movies", "recordings"]), ["recordings", "movies", "ondemand", "videos", "mylist"], "yours first, the rest in theirs")
 }
 
-// ---- recording elsewhere (DVR.qml): said on another channel's banner, and two streams from one provider ----
+// ---- recording elsewhere (DVR.qml): said at the top of the guide (never on another channel's banner), and two streams from one provider ----
 {
   const elsewhere = new Function("dvr", block(dvrQml, "function elsewhere() {"))
   const shares = new Function("dvr", "Dvr", "ch", block(dvrQml, "function sharesProvider(ch) {"))
@@ -236,6 +236,11 @@ assert.match(dvrQml, /r\.start\(\["\/usr\/bin\/python3", "-I", dvr\.helper\]\.co
   assert.equal(elsewhere(dvr), "● 2 recording")
   dvr.active = []
   assert.equal(elsewhere(dvr), "")
+  // a video being saved isn't a channel recording: not named, not counted
+  dvr.active = [{ kind: "youtube-video", channel: { name: "Lofi" }, title: "Mix" }]
+  assert.equal(elsewhere(dvr), "", "a save alone: nothing at the top")
+  dvr.active = [{ kind: "youtube-video", channel: { name: "Lofi" } }, { kind: "iptv", channel: { name: "CBS News" } }]
+  assert.equal(elsewhere(dvr), "● Recording CBS News", "a save and a recording: only the recording")
   dvr.active = [r1]
   assert.equal(shares(dvr, D, b), true, "watching another of its provider's channels: two streams")
   assert.equal(shares(dvr, D, a), false, "the one recording itself: that's its own banner")
@@ -692,6 +697,26 @@ assert.match(dvrQml, /r\.start\(\["\/usr\/bin\/python3", "-I", dvr\.helper\]\.co
                    ["scheduled", "recording", ""], "a cell says Scheduled, Recording, or nothing")
   assert.deepEqual([markFor(ch, { start: t - 3000, end: t - 540 }), markFor(ch, { start: t + 480, end: t + 3600 })], ["", ""],
                    "the shows either side, only in its padding (a minute before, two after): not Recording")
+  // a YouTube live stream recording: its cell says Recording too; a video being saved, or a YouTube one that's
+  // over, doesn't
+  const yt = { recordings: [{ kind: "youtube-live", state: "recording", started: t - 600, end: t + 3000, channel: { hash: h } },
+                            { kind: "youtube-video", state: "recording", started: t - 600, end: 0, channel: { hash: "v" } },
+                            { kind: "youtube-live", state: "done", started: t - 9000, end: t - 6000, channel: { hash: "d" } }], channelOf: r => r.channel.hash === h ? ch : { url: "other-" + r.channel.hash } }
+  yt.marks = new Function("dvr", "recordings", "Dvr", block(dvrQml, "readonly property var marks: {").replace(/\breturn m\b/, "return m"))(yt, yt.recordings, D)
+  assert.deepEqual(Object.keys(yt.marks), [ch.url], "only the live stream recording now")
+  assert.equal(fn("markFor", ["dvr", "ch", "show"])(yt, ch, { live: true, start: t - 7200, end: t + 7200 }), "recording", "the LIVE block says Recording")
+  const short = { recordings: [{ kind: "youtube-live", state: "recording", started: t - 30, end: t + 150, channel: { hash: h } }], channelOf: () => ch }
+  short.marks = new Function("dvr", "recordings", "Dvr", block(dvrQml, "readonly property var marks: {").replace(/\breturn m\b/, "return m"))(short, short.recordings, D)
+  assert.equal(fn("markFor", ["dvr", "ch", "show"])(short, ch, { live: true, start: t - 7200, end: t + 7200 }), "recording", "a short one too (three minutes): the LIVE block says Recording")
+  assert.equal(fn("markFor", ["dvr", "ch", "show"])(short, ch, { start: t - 1800, end: t + 1800 }), "", "a listed show keeps the five-minute rule")
+  // and I or Space on what's on now finds it (Stop recording), not on a later one; IPTV as before
+  const fs = (chan, show, onCh) => new Function("dvr", "guide", "Dvr", "row", "show", block(dvrQml, "function forShow(row, show) {"))(
+    { recordings: [], onChannel: () => onCh }, { channels: [chan] }, D, 0, show)
+  const running = { id: "y1", kind: "youtube-live", state: "recording" }
+  assert.equal(fs({ kind: "youtube", url: "yt" }, { live: true, start: t - 7200, end: t + 7200 }, running), running, "a YouTube channel recording: the show on now")
+  assert.equal(fs({ kind: "youtube", url: "yt" }, { start: t + 600, end: t + 1800 }, running), null, "not a later show of it")
+  assert.equal(fs({ kind: "youtube", url: "yt" }, { live: true, start: t - 7200, end: t + 7200 }, null), null, "nothing recording: nothing")
+  assert.equal(fs({ kind: "iptv", url: "x" }, { start: t - 60, end: t + 600 }, running), null, "IPTV goes by its own recordings, as before")
 
   // turning Recordings off: the running ones stop, the scheduled ones go (not cancelled: a series' come back)
   const off = []
@@ -1082,7 +1107,7 @@ assert.match(dvrQml, /r\.start\(\["\/usr\/bin\/python3", "-I", dvr\.helper\]\.co
   const stateOf = new Function("root", "listings", "channelLockItem", "timeshift", "Schedule", block(guideSrc, "function remoteState() {"))
   const tv = (extra, ts) => stateOf(Object.assign({ reception: "on", onAir: { title: "News", start: 1, end: 2 }, channels: [{ name: "One", category: "" }], tunedRow: 0,
                                                     visibleRows: [], numbers: [101], muted: false, opened: true, screen: "home", pip: false, watching: true, vod: null,
-                                                    stripAsks: "", stripPlace: false, stripQuestion: "", recBadge: "" }, extra),
+                                                    stripAsks: "", stripPlace: false, stripQuestion: "", recBadge: "", showTitle: t => t }, extra),
                                       {}, { boxUp: false, blocks: () => false }, Object.assign({ active: false, paused: false, atLive: true, chipText: "" }, ts), {})
   assert.equal(tv({}).ask, null)
   assert.deepEqual(tv({ stripAsks: "recordings", stripPlace: true, stripQuestion: "New: Recordings." }).ask, { text: "New: Recordings." })
@@ -1115,7 +1140,7 @@ assert.match(dvrQml, /r\.start\(\["\/usr\/bin\/python3", "-I", dvr\.helper\]\.co
   assert.deepEqual(mini(false, K.Key_Escape), ["close"], "not asking: Esc closes, as before")
   assert.deepEqual(mini(false, K.Key_Return), ["full"])
   assert.match(miniSrc, /model: guide\.streamAsk \? \[\{ label: "WATCH ANYWAY", act: "streamYes" \}, \{ label: "STAY", act: "streamNo" \}\]/, "its buttons say it")
-  assert.match(miniSrc, /text: guide\.streamAsk \? guide\.streamAskLabel : guide\.nowLabel\(\)/)
+  assert.match(miniSrc, /text: guide\.streamAsk \? guide\.streamAskLabel : guide\.showTitle\(guide\.nowLabel\(\)\)/)
   assert.match(miniSrc, /text: guide\.streamAsk \? guide\.streamAskNote :/)
   assert.match(guideSrc, /if \(streamAsk\) return \[\{ key: "streamYes", label: streamAskLabel, icon: "", rec: true, note: streamAskNote \}, \{ key: "streamNo", label: "Stay", icon: "" \}\]/, "the banner says the same")
 
@@ -1239,6 +1264,86 @@ assert.match(dvrQml, /r\.start\(\["\/usr\/bin\/python3", "-I", dvr\.helper\]\.co
   assert.match(block(commandsSrc, "function play(id: string): string {"), /commands\.pendingFrom = undefined/, "play resumes")
   // and the help lists them
   for (const c of ["shows <number> <words>", "startOver <id>"]) assert.ok(commandsSrc.includes('["' + c + '"'), c)
+}
+
+// ---- the guide shows what's recording: ● REC in the channel column, the
+// cell's ● Recording in red, the line at the top; YouTube's 🔴 out of titles ----
+{
+  const sched = new Function(read("Schedule.js").replace(/^\.pragma library\s*/, "") + "; return { cleanTitle }")()
+  assert.equal(sched.cleanTitle("Zenko by Lofi Geek 🔴 Japanese Lofi Hip Hop Mix 2023 🔴 No Copyright"), "Zenko by Lofi Geek · Japanese Lofi Hip Hop Mix 2023 · No Copyright", "between words: a ·")
+  assert.equal(sched.cleanTitle("🔴 LIVE: News"), "LIVE: News", "at the start: gone")
+  assert.equal(sched.cleanTitle("News 🔴"), "News", "at the end: gone")
+  assert.equal(sched.cleanTitle("A 🔴🔴 B"), "A · B", "two together: one ·")
+  assert.equal(sched.cleanTitle("🔴LIVE"), "LIVE")
+  assert.equal(sched.cleanTitle("Plain · title"), "Plain · title", "nothing else changes")
+  assert.equal(sched.cleanTitle(undefined), "")
+  assert.match(guideSrc, /function showTitle\(t\) \{ return Schedule\.cleanTitle\(t\) \}/)
+  // every place a show's or video's title is shown goes through it
+  const shown = { "ui/ProgramGrid.qml": 2, "ui/InfoPanel.qml": 3, "ui/TvScreen.qml": 1, "ui/MiniPlayer.qml": 2, "ui/ChannelTable.qml": 3, "ui/FlapBoard.qml": 2,
+                  "ui/Multiview.qml": 2, "ui/CardRows.qml": 2, "ui/HomeScreen.qml": 4, "ui/DetailBox.qml": 1, "ui/VodBar.qml": 1 }
+  for (const [f, n] of Object.entries(shown)) assert.equal((read(f).match(/showTitle\(/g) || []).length, n, f)
+  assert.equal((guideSrc.match(/root\.showTitle\(/g) || []).length, 5, "the phones' titles and the media widget's")
+  // ● REC in the channel column while it records; the cell's mark in its recording state
+  const grid = read("ui/ProgramGrid.qml")
+  assert.match(grid, /readonly property bool recording: guide\.recordingOn\(rowItem\.channel\)/)
+  assert.match(grid, /id: chanRec\n\s+visible: rowItem\.recording\n[\s\S]*?text: "● REC"\n\s+s: guide\.look\.channelRec/)
+  assert.match(grid, /\) - \(chanRec\.visible \? chanRec\.implicitWidth \+ guide\.u \* 0\.6 : 0\)\n\s+text: rowItem\.channel\.name/, "the name makes room for it")
+  assert.match(grid, /s: cell\.rec === "recording" \? guide\.look\["recordDot:recording"\] : guide\.look\.recordDot/)
+  assert.match(guideSrc, /function recordingOn\(ch\) \{ return !!dvr\.onChannel\(ch\) \}/)
+  // the line at the top: what's recording, in the banner's words
+  assert.match(guideSrc, /readonly property string recordingNow: dvr\.anyActive \? dvr\.elsewhere\(\) : ""/)
+  // the banner says REC only on the channel that's recording: another channel's says nothing of it
+  const badge = guideSrc.match(/readonly property string recBadge: ([\s\S]*?)\n  \/\/ and a word/)[1]
+  assert.ok(!badge.includes("elsewhere"), "no other channel's recording on the banner")
+  const badgeOf = (onTuned, stopping) => new Function("recOnTuned", "dvr", "root", "vod", "return " + badge)(onTuned, { stopping: stopping || {}, anyActive: true, elsewhere: () => "● 2 recording" }, { clock: () => "9:30" }, null)
+  assert.equal(badgeOf(null), "", "watching another channel while two record: nothing")
+  assert.equal(badgeOf({ id: "a", state: "recording", end: 1 }), "● REC until 9:30", "the channel that's recording: its REC")
+  // the Split-Flap board: its status column says ● REC, red, before Live or On air
+  const flap = read("ui/FlapBoard.qml")
+  const status = new Function("guide", "ch", "show", "recording", flap.match(/function status\(ch, show, recording\) \{([\s\S]*?)\n  \}\n/)[1])
+  assert.equal(status({ now: 100 }, { state: "ready" }, { live: true }, true), "● REC", "a recording row")
+  assert.equal(status({ now: 100 }, { state: "ready" }, { live: true }, false), "Live", "a row that isn't")
+  assert.match(flap, /readonly property bool recording: guide\.recordingOn\(rowItem\.channel\)/)
+  assert.match(flap, /if \(c === "status"\) return board\.status\(ch, show, item\.recording\)/)
+  assert.match(flap, /text === "● REC" \? guide\.look\.channelRec\.text\.color/, "in the REC color")
+  // the Terminal layout (a status bar, a channel table) shows them too
+  assert.match(read("ui/TopBar.qml"), /visible: guide\.recordingNow !== ""\n\s+text: guide\.recordingNow\n\s+s: guide\.look\.mastheadRec/)
+  const table = read("ui/ChannelTable.qml")
+  assert.match(table, /readonly property bool recording: guide\.recordingOn\(rowItem\.channel\)/)
+  assert.match(table, /id: tableRec\n\s+visible: rowItem\.recording\n[\s\S]*?text: "● REC"\n\s+s: guide\.look\.channelRec/)
+  assert.match(table, /- \(tableRec\.visible \? tableRec\.implicitWidth \+ parent\.spacing : 0\)\n\s+anchors\.verticalCenter: parent\.verticalCenter\n\s+text: rowItem\.channel\.name/, "the name makes room")
+  assert.match(read("ui/Masthead.qml"), /id: mastRec\n\s+visible: guide\.layout\.masthead === "title" && guide\.recordingNow !== ""[\s\S]*?text: guide\.recordingNow\n\s+s: guide\.look\.mastheadRec/)
+  // red by default, a theme can change each
+  const look = new Function(read("Look.js").replace(/^\.pragma library\s*/, "") + "; return { effective }")()
+  const eff = look.effective({}, {})
+  assert.equal(eff["recordDot:recording"].text.color, "alert", "● Recording is red")
+  assert.equal(eff.recordDot.text.color, "inherit", "Scheduled and Conflict keep the cell's color")
+  assert.equal(eff.channelRec.text.color, "alert")
+  assert.equal(eff.mastheadRec.text.color, "alert")
+  assert.equal(look.effective({ "recordDot:recording": { text: { color: "accent" } } }, {})["recordDot:recording"].text.color, "accent", "a theme's own")
+}
+
+// ---- the movie bar: click or drag along it to go there ----
+{
+  const vb = read("ui/VodBar.qml")
+  const atX = new Function("x", "track", "duration", vb.match(/function atX\(x\) \{ (return [^}]*) \}/)[1])
+  assert.equal(atX(250, { width: 1000 }, 3600), 900, "a quarter of the way: a quarter of it")
+  assert.equal(atX(-50, { width: 1000 }, 3600), 0, "left of it: the start")
+  assert.equal(atX(1200, { width: 1000 }, 3600), 3600, "right of it: the end")
+  assert.match(vb, /onPressed: function\(mouse\) \{ bar\.dragFor = bar\.guide\.vod; bar\.dragAt = bar\.atX\(mouse\.x\); bar\.guide\.showVodBar\(\) \}/, "pressing shows where")
+  assert.match(vb, /onPositionChanged: function\(mouse\) \{ if \(pressed\) \{ bar\.dragAt = bar\.atX\(mouse\.x\)/, "the time follows the drag")
+  const release = new Function("bar", "mouse", vb.match(/onReleased: function\(mouse\) \{ ([^\n]*) \}\n/)[1])
+  const film = { id: "a" }, seeks = []
+  const b1 = { dragFor: film, dragAt: 5, atX: x => x, guide: { vod: film, seekVodTo: t => seeks.push(t) } }
+  release(b1, { x: 42 })
+  assert.deepEqual([seeks, b1.dragAt, b1.dragFor], [[42], -1, null], "the picture jumps on letting go")
+  const b2 = { dragFor: film, dragAt: 5, atX: x => x, guide: { vod: { id: "b" }, seekVodTo: t => seeks.push(t) } }
+  release(b2, { x: 7 })
+  assert.deepEqual(seeks, [42], "another video came on during the drag: it isn't moved")
+  assert.match(vb, /onPressed: function\(mouse\) \{ bar\.dragFor = bar\.guide\.vod;/, "the drag remembers its video")
+  assert.match(vb, /readonly property real shownAt: dragAt >= 0 \? dragAt : position/)
+  assert.equal((vb.match(/bar\.shownAt/g) || []).length, 4, "the bar, the mark and both times show the drag")
+  assert.match(read("ui/TvScreen.qml"), /guide\.reception !== "on" \|\| vodBar\.held\)/, "it stays while the pointer's on it")
 }
 
 console.log("dvr (guide): all good")

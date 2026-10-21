@@ -93,6 +93,7 @@ Item {
     property var areaImages: ({})
     readonly property var appHome: ({ pictureBroken: function() {}, pictureDrawn: function() {} })
     function clock(t) { return "8:42 PM" }
+    function showTitle(t) { return t }
     function posterFor(entry) { return entry && entry.poster ? "file://" + entry.poster : "" }
     function homeOpen() {}
   }

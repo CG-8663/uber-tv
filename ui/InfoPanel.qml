@@ -136,7 +136,7 @@ Box {
         }
         Label {
           width: parent.width
-          text: guide.selected ? guide.selected.title
+          text: guide.selected ? guide.showTitle(guide.selected.title)
                 : !info.ch ? ""
                 : info.ch.state === "error" ? "No signal — nothing on this channel can air"
                 : "Loading listings…"
@@ -186,7 +186,7 @@ Box {
         Label {
           width: parent.width
           visible: area.layout.upNext === 1 && info.after !== null
-          text: info.after ? "NEXT  " + guide.clock(info.after.start) + "  " + info.after.title : ""
+          text: info.after ? "NEXT  " + guide.clock(info.after.start) + "  " + guide.showTitle(info.after.title) : ""
           s: guide.look.infoNext
           unit: guide.u
           elide: Text.ElideRight
@@ -204,7 +204,7 @@ Box {
             required property var modelData
             required property int index
             width: info.width
-            text: guide.clock(modelData.start) + "  " + modelData.title
+            text: guide.clock(modelData.start) + "  " + guide.showTitle(modelData.title)
             s: index === 0 ? guide.look.infoNext : guide.look["infoNext:later"]
             unit: guide.u
             elide: Text.ElideRight

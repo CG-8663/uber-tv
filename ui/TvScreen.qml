@@ -41,8 +41,9 @@ Rectangle {
 
   // On demand: the player bar
   VodBar {
+    id: vodBar
     z: 2
-    visible: guide.vod !== null && (guide.vodBarShown || guide.vodPaused || guide.reception !== "on")
+    visible: guide.vod !== null && (guide.vodBarShown || guide.vodPaused || guide.reception !== "on" || vodBar.held)
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom
@@ -61,7 +62,7 @@ Rectangle {
     logo: guide.logoFor(guide.channels[guide.tunedRow])
     number: guide.numbers[guide.tunedRow] || ""
     channel: guide.channels[guide.tunedRow] ? guide.channels[guide.tunedRow].name : ""
-    title: guide.onAir ? guide.onAir.title : ""
+    title: guide.onAir ? guide.showTitle(guide.onAir.title) : ""
     progress: guide.onAir && (!guide.onAir.live || guide.onAir.epg) ? Math.max(0, (guide.now - guide.onAir.start) / (guide.onAir.end - guide.onAir.start)) : -1
     clock: guide.clock(guide.now)
     times: !guide.onAir ? "" : guide.onAir.live && !guide.onAir.epg ? "● LIVE" : guide.clock(guide.onAir.start) + " – " + guide.clock(guide.onAir.end)

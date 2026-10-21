@@ -73,6 +73,7 @@ Item {
     function startStreamer() {}
     function liveEnded(r) {}
     function clock(t) { return "9:41 PM" }
+    function showTitle(t) { return t }
     function turnOff() { turnOffs++; view.teardown() }
     // the TV's pause and rewind buffer (Timeshift.qml): busy while its writer's going; whenGone once it's gone
     property var pauser: QtObject {

@@ -713,7 +713,7 @@ Item {
           anchors.rightMargin: cell.tu * 0.8
           spacing: cell.tu * 0.15
           Label { width: parent.width; text: mv.nameOf(cell.index); s: mv.guide.look.mvName; unit: cell.tu; elide: Text.ElideRight }
-          Label { width: parent.width; text: player.onAir ? player.onAir.title : ""; s: mv.guide.look.mvShow; unit: cell.tu; elide: Text.ElideRight }
+          Label { width: parent.width; text: player.onAir ? mv.guide.showTitle(player.onAir.title) : ""; s: mv.guide.look.mvShow; unit: cell.tu; elide: Text.ElideRight }
         }
       }
 
@@ -786,7 +786,7 @@ Item {
     logo: mv.guide.logoFor ? mv.guide.logoFor(mv.guide.channels[row]) : ""
     number: mv.guide.numbers[row] ? String(mv.guide.numbers[row]) : ""
     channel: mv.guide.channels[row] ? mv.guide.channels[row].name : ""
-    title: air ? air.title : ""
+    title: air ? mv.guide.showTitle(air.title) : ""
     progress: air && (!air.live || air.epg) ? Math.max(0, (mv.guide.now - air.start) / Math.max(1, air.end - air.start)) : -1
     clock: mv.guide.clock(mv.guide.now)
     times: !air ? "" : air.live && !air.epg ? "● LIVE" : mv.guide.clock(air.start) + " – " + mv.guide.clock(air.end)

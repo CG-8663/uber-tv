@@ -26,8 +26,9 @@ one screen you drive with the keyboard, the mouse or your phone.
 - **Mini player** in a corner while you work, and media keys that change
   channel.
 - **Phone remote.** Pair a phone on your network: a d-pad, a number pad and
-  the guide. It shows what's recording and whether the TV is paused or
-  behind live, and answers the strip's questions (TURN ON, DISMISS).
+  the guide. It shows when the channel on is recording, and whether the TV
+  is paused or behind live, and answers the strip's questions (TURN ON,
+  DISMISS).
 - **Channel lock.** A passcode for the channels you choose.
 - **Apps.** Launchers for services like Netflix and HBO Max, and sandboxed
   apps like Jellyfin and Scores. Third-party apps install from signed files.

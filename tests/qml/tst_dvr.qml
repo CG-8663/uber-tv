@@ -46,6 +46,7 @@ Item {
     property int libEpisode: 0
     property var acted: []
     function clock(t) { return "9:00" }
+    function showTitle(t) { return t }
     function dayTime(t) { return "Tomorrow, 9:00" }
     // as DVR.qml's reasonOf: a conflict's others (ids) named as the lock is now
     function recReason(rec) { return Dvr.reasonOf(rec, rec.state === "conflict" ? (rec.others || []).map(function(id) { return { q: "Quiz", f: "Film" }[id] || "a recording" }) : null) }

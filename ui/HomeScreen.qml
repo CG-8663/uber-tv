@@ -144,7 +144,7 @@ Item {
     }
     Label {
       width: parent.width
-      text: home.topInfo.title
+      text: guide.showTitle(home.topInfo.title)
       s: guide.look.heroTitle
       unit: home.u
       sizeFactor: home.topMode === "clock" ? 1.7 : 1
@@ -287,7 +287,7 @@ Item {
               spacing: home.u * 0.15
               Label {
                 width: parent.width
-                text: card.modelData.title
+                text: guide.showTitle(card.modelData.title)
                 s: card.current ? guide.look["homeTile:current"] : guide.look.homeTile
                 unit: home.u
                 elide: Text.ElideRight
@@ -381,7 +381,7 @@ Item {
                 anchors.fill: parent
                 anchors.margins: home.u * 0.8
                 visible: pic.status !== Image.Ready && logoPic.status !== Image.Ready
-                text: card.modelData.title
+                text: guide.showTitle(card.modelData.title)
                 s: guide.look.homeCardTitle
                 unit: home.u
                 sizeFactor: card.modelData.kind === "app" ? 1.5 : 1.2
@@ -457,7 +457,7 @@ Item {
               spacing: home.u * 0.15
               Label {
                 width: parent.width
-                text: card.modelData.title
+                text: guide.showTitle(card.modelData.title)
                 s: guide.look.homeCardTitle
                 unit: home.u
                 elide: Text.ElideRight

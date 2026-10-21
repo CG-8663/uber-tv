@@ -820,7 +820,7 @@ assert.equal(L.bgFloored("image", "", "theme"), false)
     assert.ok(block(guideSrc, "function logoFor(ch) {").includes("channelLockItem.blocks(ch)"), "no logo for a locked channel")
     assert.ok(block(guideSrc, "function channelCard(r, show, starting) {").includes("!channelLockItem.blocks(ch) ? ch.logo"), "nor a poster")
     assert.match(guideSrc, /if \(root\.titlesHidden\(ch\)\) continue   \/\/ a locked channel's shows aren't found by their titles/, "Search doesn't find them by title")
-    assert.match(guideSrc, /title: root\.titlesHidden\(c\) \? "Locked" : title/, "nor does the phone's guide show them")
+    assert.match(guideSrc, /title: root\.titlesHidden\(c\) \? "Locked" : root\.showTitle\(title\)/, "nor does the phone's guide show them")
     // a locked channel's videos (On Demand) are locked with it: by every
     // channel a video is on (one upload can be on several, in any order),
     // and by the channels' addresses kept with what you watched or saved, so

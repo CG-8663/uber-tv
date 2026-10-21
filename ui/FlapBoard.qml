@@ -42,8 +42,9 @@ Item {
     return out
   }
 
-  function status(ch, show) {
+  function status(ch, show, recording) {
     if (!ch) return ""
+    if (recording) return "● REC"      // this channel records: before Live, On air…
     if (show && show.live) return "Live"
     if (ch.state === "error") return "No signal"
     if (!show) return "Loading"
@@ -57,11 +58,11 @@ Item {
     var show = item.show
     if (c === "number") return String(guide.numbers[item.r] || "")
     if (c === "name") return ch.name
-    if (c === "now") return show ? show.title : ""
-    if (c === "next") return item.after ? item.after.title : ""
+    if (c === "now") return show ? guide.showTitle(show.title) : ""
+    if (c === "next") return item.after ? guide.showTitle(item.after.title) : ""
     if (c === "nextAt") return item.after ? guide.clock(item.after.start) : ""
     if (c === "left") return show && !show.live ? Math.max(0, Math.ceil((show.end - guide.now) / 60)) + "m" : ""
-    if (c === "status") return board.status(ch, show)
+    if (c === "status") return board.status(ch, show, item.recording)
     if (c === "category") return guide.categoryName(ch.category)
     return ""
   }
@@ -110,6 +111,7 @@ Item {
                                     && (index === 0 || (guide.channels[guide.visibleRows[index - 1]].category || "") !== (channel.category || ""))
       readonly property bool current: r === guide.row
       readonly property bool lockedNow: !!guide.channelLock && guide.channelLock.blocks(rowItem.channel)
+      readonly property bool recording: guide.recordingOn(rowItem.channel)
       readonly property var show: current && guide.selected ? guide.selected : guide.showAt(r, guide.now)
       readonly property var after: show ? guide.nextShow(r, show) : null
       readonly property real headH: heads ? Math.round(guide.u * 1.6) : 0
@@ -160,7 +162,8 @@ Item {
                 count: board.counts[column.modelData] - (column.withLogo ? board.logoFlaps : 0)
                 text: board.cell(column.modelData, rowItem)
                 s: column.modelData === "status" ? guide.look["flapTile:status"] : board.flap
-                textColor: column.modelData === "status" && (text === "Live" || text === "No signal") && guide.look.liveTag.text.color !== "inherit"
+                textColor: column.modelData === "status" && text === "● REC" ? guide.look.channelRec.text.color
+                         : column.modelData === "status" && (text === "Live" || text === "No signal") && guide.look.liveTag.text.color !== "inherit"
                            ? guide.look.liveTag.text.color : undefined
                 alignRight: column.modelData === "number" || column.modelData === "left"
                 tileHeight: board.tileH

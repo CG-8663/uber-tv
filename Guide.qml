@@ -4384,6 +4384,11 @@ Item {
   // a time (or the next one starting after)
   function listingsHave(ch) { return !!ch && listings.has(ch.url) }
   function showListed(ch, at, after) { return at ? listings.at(ch.url, at) : listings.after(ch.url, after) }
+  // what's recording, for the guide (ProgramGrid, Masthead): a channel's REC, and the line at the top
+  function recordingOn(ch) { return !!dvr.onChannel(ch) }
+  readonly property string recordingNow: dvr.anyActive ? dvr.elsewhere() : ""
+  // a title as it's shown (YouTube's 🔴 taken out: Schedule.js)
+  function showTitle(t) { return Schedule.cleanTitle(t) }
   // a channel's listed shows in a span, visited without making each one (agents' shows)
   function eachListed(ch, from, to, visit) { listings.each(ch.url, from, to, visit) }
   function listedShow(s) { return listings.show(s) }
@@ -6754,10 +6759,11 @@ Item {
     return tsActions.concat([{ key: "multiview", label: "Multiview", icon: "apps" }]).concat(rec).concat([{ key: "mini", label: "Mini player", icon: "window" },
             { key: "guide", label: "Guide", icon: "tv" }, { key: "mute", label: root.muted ? "Sound on" : "Mute", icon: "" }])
   }
-  // The REC badge on the banner: the channel on is recording, until when;
-  // on another channel, what's recording (dvr.elsewhere)
+  // The REC badge on the banner: only on the channel that's recording, until
+  // when (another channel's banner says nothing of it: the guide's top line
+  // and its ● REC do)
   readonly property string recBadge: recOnTuned ? (dvr.stopping[recOnTuned.id] ? "Stopping…" : recOnTuned.state === "starting" ? "Starting to record…" : "● REC until " + root.clock(recOnTuned.end))
-                                     : dvr.anyActive && !vod ? dvr.elsewhere() : ""
+                                     : ""
   // and a word when watching this one and recording another from the same provider
   readonly property string recNote: !recOnTuned && !vod && tunedRow >= 0 && dvr.anyActive && dvr.sharesProvider(channels[tunedRow]) ? "Watching and recording from this provider: 2 streams" : ""
   // Record turned into Stop under the cursor: the cursor goes to Until, so a
@@ -7474,7 +7480,7 @@ Item {
       }
       var lockedNow = channelLockItem.blocks(c)
       list.push({ number: root.numbers[r], name: c.name, category: c.category || "", channelId: lockedNow ? "" : c.channelId || "",
-                  title: root.titlesHidden(c) ? "Locked" : title, live: !!c.live && !root.titlesHidden(c), locked: lockedNow })
+                  title: root.titlesHidden(c) ? "Locked" : root.showTitle(title), live: !!c.live && !root.titlesHidden(c), locked: lockedNow })
     }
     var vod = on && root.vod ? root.vod : null
     return {
@@ -7486,9 +7492,9 @@ Item {
       rec: on ? root.recBadge : "",
       pause: on && !vod && timeshift.active ? (timeshift.paused ? "Paused" : timeshift.atLive ? "" : timeshift.chipText) : "",
       mode: root.pip && on ? "mini" : root.watching && on ? "full" : root.opened ? root.screen : "off",
-      now: vod ? { vod: true, title: vod.title, name: vod.subtitle || "", paused: root.vodPaused }
+      now: vod ? { vod: true, title: root.showTitle(vod.title), name: vod.subtitle || "", paused: root.vodPaused }
          : on && ch ? { number: root.numbers[root.tunedRow], name: ch.name, category: ch.category || "", channelId: ch.channelId || "",
-                       title: root.onAir.title, live: !!root.onAir.live, start: root.onAir.start, end: root.onAir.end } : null,
+                       title: root.showTitle(root.onAir.title), live: !!root.onAir.live, start: root.onAir.start, end: root.onAir.end } : null,
       channels: list
     }
   }
@@ -7817,7 +7823,7 @@ Item {
         active: true,
         status: root.multiview.paused ? "Paused" : "Playing",
         id: mt.onAir ? mt.onAir.id || "" : "",
-        title: mt.onAir ? mt.onAir.title : "",
+        title: mt.onAir ? root.showTitle(mt.onAir.title) : "",
         artist: mch ? "Multiview · CH " + root.numbers[mr] + " · " + mch.name : "Multiview",
         album: mch && mch.category ? mch.category : "",
         length: 0, position: 0,
@@ -7834,7 +7840,7 @@ Item {
       active: on,
       status: !on ? "Stopped" : paused ? "Paused" : "Playing",
       id: on ? root.onAir.id : "",
-      title: on ? root.onAir.title : "",
+      title: on ? root.showTitle(root.onAir.title) : "",
       artist: vod ? vod.subtitle || "" : on && ch ? "CH " + root.numbers[root.tunedRow] + " · " + ch.name : "",
       album: vod ? "" : on && ch && ch.category ? ch.category : "",
       length: vod ? Math.round(player.duration * 1000) : on && !root.onAir.live ? Math.round((root.onAir.end - root.onAir.start) * 1000000) : 0,

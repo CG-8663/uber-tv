@@ -98,6 +98,7 @@ Item {
                                       && (index === 0 || (guide.channels[guide.visibleRows[index - 1]].category || "") !== (channel.category || ""))
         readonly property bool current: r === guide.row
         readonly property bool lockedNow: !!guide.channelLock && guide.channelLock.blocks(rowItem.channel)
+        readonly property bool recording: guide.recordingOn(rowItem.channel)
         readonly property var show: guide.showAt(r, guide.now)
         readonly property var after: show ? guide.nextShow(r, show) : null
         readonly property real headH: heads ? Math.round(table.rowH * 1.25) : 0
@@ -187,13 +188,23 @@ Item {
                     locked: rowItem.lockedNow
                   }
                   Label {
-                    width: parent.width - (tableLogo.visible ? tableLogo.width + parent.spacing : 0)
+                    width: parent.width - (tableLogo.visible ? tableLogo.width + parent.spacing : 0) - (tableRec.visible ? tableRec.implicitWidth + parent.spacing : 0)
                     anchors.verticalCenter: parent.verticalCenter
                     text: rowItem.channel.name
                     s: guide.look.channelName
                     unit: guide.u
                     sizeFactor: table.fit(s)
                     elide: Text.ElideRight
+                  }
+                  // ● REC while this channel records
+                  Label {
+                    id: tableRec
+                    visible: rowItem.recording
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "● REC"
+                    s: guide.look.channelRec
+                    unit: guide.u
+                    sizeFactor: table.fit(s)
                   }
                 }
                 Label {
@@ -222,9 +233,9 @@ Item {
                   }
                   Label {
                     width: parent.width - (liveTag.visible ? liveTag.width + parent.spacing : 0)
-                    text: cellItem.modelData === "now" ? (rowItem.show ? rowItem.show.title
+                    text: cellItem.modelData === "now" ? (rowItem.show ? guide.showTitle(rowItem.show.title)
                                                                      : rowItem.channel.state === "error" ? "no signal" : "…")
-                                                       : (rowItem.after ? rowItem.after.title : "")
+                                                       : (rowItem.after ? guide.showTitle(rowItem.after.title) : "")
                     s: guide.look.tableText
                     unit: guide.u
                     sizeFactor: table.fit(guide.look.tableText)
@@ -370,7 +381,7 @@ Item {
             }
             Label {
               width: lineupRows.width - guide.u * 15.6
-              text: showRow.modelData.title
+              text: guide.showTitle(showRow.modelData.title)
               s: guide.look.tableText
               unit: guide.u
               sizeFactor: table.fit(guide.look.tableText)

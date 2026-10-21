@@ -101,6 +101,7 @@ Item {
       readonly property var channel: guide.channels[r] || ({ name: "", state: "loading", category: "" })
       readonly property var shows: guide.showsFor(r)
       readonly property bool lockedNow: !!guide.channelLock && guide.channelLock.blocks(rowItem.channel)
+      readonly property bool recording: guide.recordingOn(rowItem.channel)
       readonly property bool heads: guide.hasCategories
                                     && (index === 0 || (guide.channels[guide.visibleRows[index - 1]].category || "") !== (channel.category || ""))
       readonly property real band: heads ? guide.u * guide.layout.bandHeight : 0
@@ -216,9 +217,9 @@ Item {
             sizeFactor: guide.showLogos ? 1.1 / 1.6 : guide.managing ? 1.2 / 1.6 : 1
           }
           Label {
-            width: gridArea.inRow ? guide.chanW - chanBox.padding * 2 - numberWidth.advanceWidth - logoBox.width - guide.u * 1.5
+            width: (gridArea.inRow ? guide.chanW - chanBox.padding * 2 - numberWidth.advanceWidth - logoBox.width - guide.u * 1.5
                  : guide.showLogos ? guide.chanW - logoBox.width - guide.u * 2.1
-                 : guide.chanW - guide.u * (guide.managing ? 6 : 4.5)
+                 : guide.chanW - guide.u * (guide.managing ? 6 : 4.5)) - (chanRec.visible ? chanRec.implicitWidth + guide.u * 0.6 : 0)
             text: rowItem.channel.name
             s: guide.look.channelName
             unit: guide.u
@@ -226,6 +227,18 @@ Item {
             elide: Text.ElideRight
           }
           }
+        }
+
+        // ● REC while this channel records
+        Label {
+          id: chanRec
+          visible: rowItem.recording
+          anchors.right: parent.right
+          anchors.rightMargin: chanBox.padding
+          anchors.verticalCenter: parent.verticalCenter
+          text: "● REC"
+          s: guide.look.channelRec
+          unit: guide.u
         }
 
         Rectangle {
@@ -294,7 +307,7 @@ Item {
               anchors.rightMargin: cell.padding
               anchors.verticalCenter: parent.verticalCenter
               text: cell.rec === "recording" ? (parent.width > guide.u * 10 ? "● Recording" : "●") : cell.rec === "conflict" ? "Conflict" : "Scheduled"
-              s: guide.look.recordDot
+              s: cell.rec === "recording" ? guide.look["recordDot:recording"] : guide.look.recordDot
               unit: guide.u
               color: s.text.color === "inherit" ? cell.s.text.color : s.text.color
             }
@@ -304,8 +317,8 @@ Item {
               anchors.leftMargin: cell.padding + (liveTag.visible ? liveTag.implicitWidth + gridArea.liveGap : 0)
               anchors.rightMargin: cell.padding + (recTag.visible ? recTag.implicitWidth + gridArea.liveGap : 0)
               verticalAlignment: Text.AlignVCenter
-              text: cell.modelData.live ? cell.modelData.title
-                    : (cell.modelData.start < guide.windowStart ? "◀ " : "") + cell.modelData.title
+              text: cell.modelData.live ? guide.showTitle(cell.modelData.title)
+                    : (cell.modelData.start < guide.windowStart ? "◀ " : "") + guide.showTitle(cell.modelData.title)
                       + (cell.modelData.end > guide.windowEnd ? " ▶" : "")
               s: cell.s
               unit: guide.u
