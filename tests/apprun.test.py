@@ -1218,6 +1218,43 @@ app.run()
         s.signed_in = True
         self.assertEqual(s.get("token"), "fresh")
 
+    def test_every_secret_kept_is_read_back(self):
+        """32 secrets of the most text each may be, however JSON writes it:
+        the file is read back whole and the next one kept loses none; a
+        sign-in's value past 4 KB of UTF-8 is refused when it's set"""
+        path = os.path.join(WORK, "bigsecrets", "secrets.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        s = apprun.Secrets(path, "http://127.0.0.1:9/jf", [], True, [], False)
+        self.assertEqual(s.set_sign_in("one", "\u00e9" * 2049), "a secret is up to 4 KB of text")
+        for i in range(31):
+            self.assertEqual(s.set_sign_in("k%d" % i, "\u00e9" * 2048), "")   # 4 KB of UTF-8, 12 KB of JSON
+        self.assertGreater(os.path.getsize(path), 256 * 1024)
+        self.assertEqual(s.set_sign_in("last", "x"), "")
+        self.assertEqual(len(apps.read_secrets(path)["signIn"]["values"]), 32, "none lost")
+        # what you type in its settings, through bin/om-pg-apps: control characters, 6 bytes each in JSON
+        path = os.path.join(WORK, "bigsecrets", "typed.json")
+        for i in range(32):
+            apps.do_secret_set(path, "k%d" % i, "\x01" * 4096)
+        self.assertGreater(os.path.getsize(path), 768 * 1024)
+        self.assertEqual(len(apps.read_secrets(path)["user"]), 32, "none lost")
+
+    def test_a_secrets_file_that_cant_be_read_is_left_as_it_is(self):
+        path = os.path.join(WORK, "badsecrets", "secrets.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        for bad in (b"{not json", b"[]", b'{"user": {}}' + b" " * (1024 * 1024)):
+            with open(path, "wb") as f:
+                f.write(bad)
+            s = apprun.Secrets(path, "http://127.0.0.1:9/jf", [], True, [], False)
+            self.assertIn("couldn't be read", s.set_sign_in("token", "fresh"))
+            with self.assertRaises(apps.Bad):
+                apps.do_secret_set(path, "apiKey", "typed")
+            with self.assertRaises(apps.Bad):
+                apps.do_secret_clear(path, "apiKey")
+            s.forget_sign_in()
+            self.assertEqual(open(path, "rb").read(), bad, "never written over")
+        apps.do_secret_clear(path, "*")
+        self.assertEqual(apps.read_secrets(path), {"user": {}, "signIn": {"server": "", "values": {}}}, "forgetting all of it needs nothing from it")
+
     async def test_sign_in_values_only_for_an_app_that_signs_in(self):
         main = "from uber_tv import app, secret, Message\n@app.action\ndef action(i, a):\n    return Message(str(secret('token')))\napp.run()\n"
         srv = "http://127.0.0.1:9/jf"
