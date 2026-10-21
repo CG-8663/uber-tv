@@ -44,6 +44,8 @@ import tempfile
 import time
 from importlib.machinery import SourceFileLoader
 
+sys.dont_write_bytecode = True   # the plugin's folder is watched: a .pyc written in lib/ would reload the guide
+
 PLUGIN = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 BWRAP = "/usr/bin/bwrap"
 PYTHON = "/usr/bin/python3"

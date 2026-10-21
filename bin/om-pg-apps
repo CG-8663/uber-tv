@@ -145,6 +145,8 @@ import urllib.parse
 import urllib.request
 import zlib
 
+sys.dont_write_bytecode = True   # the plugin's folder is watched: a .pyc written in lib/ would reload the guide
+
 API = 4                              # the newest app API this guide speaks (1: launchers, 2 to 4: apps with code)
 NAMESPACE = PRINCIPAL = "uber-tv-catalog"
 MAX_PACKAGE = 20 * 1024 * 1024       # downloaded
