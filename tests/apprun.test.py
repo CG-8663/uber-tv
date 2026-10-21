@@ -3631,6 +3631,52 @@ class LiveViews(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(blocks.plain("\U0001f600", 10, "a title"), "\U0001f600")
 
 
+class ScoresMissingKeys(unittest.IsolatedAsyncioTestCase):
+    """The bundled scores app, with ESPN sending a game without what a card
+    needs: that game is left out, the rest shown, and its live view goes on
+    updating (it used to end at the first such game)"""
+
+    async def asyncSetUp(self):
+        board = json.load(open(os.path.join(ROOT, "tests", "fixtures", "espn-nfl-scoreboard.json")))
+        live = next(e for e in board["events"] if e["competitions"][0]["status"]["type"]["state"] == "in")
+        no_team = json.loads(json.dumps(live))
+        no_team["id"] = "bad-1"
+        del no_team["competitions"][0]["competitors"][0]["team"]
+        no_home = json.loads(json.dumps(live))
+        no_home["id"] = "bad-2"
+        for c in no_home["competitions"][0]["competitors"]:
+            c["homeAway"] = "away"
+        board["events"] = [no_team, no_home] + board["events"]
+        self.good = len(board["events"]) - 2
+        data = json.dumps(board).encode()
+        self.real = net.exchange
+
+        async def exchange(url, method, headers, body, gate, kind, pin="", resolver=None):
+            gate.allow(url)
+            return FakeRes(url, method, 200, None, data)
+        net.exchange = exchange
+        self.h = Harness(os.path.join(ROOT, "apps", "first-party", "tv.uber.scores"))
+        await self.h.start()
+
+    async def asyncTearDown(self):
+        await self.h.stop()
+        net.exchange = self.real
+
+    async def test_a_bad_game_is_left_out(self):
+        r = await self.h.call("home")
+        self.assertEqual(r["kind"], "screen", r)
+        ids = [it["id"] for row in r["value"]["rows"] for it in row["items"]]
+        self.assertEqual(len(ids), self.good)
+        self.assertFalse({"bad-1", "bad-2"} & set(ids))
+        await self.h.rt.from_guide({"t": "viewOn", "view": self.h.n})
+        end = time.monotonic() + 25   # its first turn comes after 15 seconds
+        while time.monotonic() < end and not [f for f in self.h.frames if f.get("t") == "update"]:
+            await asyncio.sleep(0.2)
+        ups = [f for f in self.h.frames if f.get("t") == "update"]
+        self.assertTrue(ups, "the live view updated")
+        self.assertEqual(sum(len(row["items"]) for row in ups[0]["rows"]), self.good)
+
+
 class StreamRedirects(unittest.IsolatedAsyncioTestCase):
     async def test_a_stream_never_reaches_the_server(self):
         """a stream goes to its net hosts at every hop: a net host sending it
