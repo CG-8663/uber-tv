@@ -279,13 +279,11 @@ Item {
       // a replacement only once the old player is really gone, and only for
       // a runtime still running
       if (next && !ok) { pb.dropPending(); guide.appPlaybackEnded(next.app, "The player before didn't let go, so it didn't play.") }
-      else if (next) { pb.pendingPlay = null; if (next.rt.phase === "ready") pb.start(next.app, next.rt, next.value) }
+      else if (next && next.rt.phase === "ready") { pb.pendingPlay = null; pb.start(next.app, next.rt, next.value) }
+      else if (next) { pb.dropPending(); guide.appPlaybackEnded(next.app, "The app stopped before it could play.") }
     })
   }
 
-  // A play that waited and won't happen after all: the relay session its
-  // app opened for it is closed (it never started, so no report is owed;
-  // a runtime that stopped took its relay with it)
   // A play waiting for the TV's buffer, given up (its app's, or any): its relay closed
   function dropWaiting(appId) {
     var w = pb.waitingTv
@@ -294,10 +292,14 @@ Item {
     if (w.rt.phase === "ready") w.rt.closeRelay(w.value.session)
   }
 
+  // A play that waited and won't happen after all: the relay session its
+  // app opened for it is closed (it never started, so no report is owed;
+  // a runtime that's stopping or stopped takes it with it, and nothing is
+  // sent to one that's gone)
   function dropPending() {
     var p = pb.pendingPlay
     pb.pendingPlay = null
-    if (p && p.rt.phase === "ready") p.rt.closeRelay(p.value.session)
+    if (p) p.rt.closeRelay(p.value.session)
   }
 
   function runAfter() {
