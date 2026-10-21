@@ -1518,7 +1518,10 @@ Item {
   property var vod: null
   property bool vodBarShown: false
   property bool vodPaused: false
-  readonly property real playPosition: vod ? player.position : 0
+  readonly property real playPosition: vod ? (seekTarget >= 0 ? seekTarget : player.position) : 0
+  // Where a burst of skips is going (ms), not yet asked of the player; -1: none
+  property real seekTarget: -1
+  onVodChanged: { root.seekTarget = -1; seekGap.stop() }
   readonly property real playDuration: vod ? player.duration : 0
 
   // The TV
@@ -7080,16 +7083,27 @@ Item {
     root.turnOff()
   }
 
+  // Skips add up, and the player is asked at most every seekGap ms: each
+  // seek makes FFmpeg find its place in the file, and a held key (or a remote
+  // sending hundreds) asked for more than it could do, until the shell stalled
   function seekVod(seconds) {
     if (!root.vod || !root.started || player.duration <= 0) return
-    player.position = Math.max(0, Math.min(player.duration - 1000, player.position + seconds * 1000))
-    root.showVodBar()
+    var from = root.seekTarget >= 0 ? root.seekTarget : player.position
+    root.seekVodTo((from + seconds * 1000) / 1000)
   }
 
   function seekVodTo(seconds) {
     if (!root.vod || !root.started || player.duration <= 0) return
-    player.position = Math.max(0, Math.min(player.duration - 1000, seconds * 1000))
+    root.seekTarget = Math.max(0, Math.min(player.duration - 1000, seconds * 1000))
+    if (!seekGap.running) root.applySeek()
     root.showVodBar()
+  }
+
+  function applySeek() {
+    if (root.seekTarget < 0) return
+    if (root.vod && player.duration > 0) player.position = root.seekTarget
+    root.seekTarget = -1
+    seekGap.restart()   // a seek asked for during the gap waits for its end
   }
 
   function togglePause() {
@@ -7910,6 +7924,12 @@ Item {
   function showPipBanner() {
     root.pipBannerShown = true
     pipBannerTimer.restart()
+  }
+
+  Timer {
+    id: seekGap
+    interval: 300
+    onTriggered: root.applySeek()
   }
 
   // The system's default sound output: the TV's sound follows it, so

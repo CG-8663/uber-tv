@@ -1274,6 +1274,18 @@ Scope {
       return commands.okReply({ playing: entry.title, from: guide.resumeAt(entry.id) })
     }
 
+    // play, from a moment: seconds, or h:mm:ss / mm:ss (a scene, not a burst of skips)
+    function playAt(id: string, at: string): string {
+      var m = String(at).trim().match(/^(?:(\d{1,2}):)?(?:(\d{1,2}):)?(\d{1,6})$/)
+      if (!m) return commands.failReply("a time is seconds, or h:mm:ss or mm:ss")
+      var parts = String(at).trim().split(":").map(Number)
+      var secs = parts.reduce(function(a, b) { return a * 60 + b }, 0)
+      var said = JSON.parse(commands.play(id))
+      if (!said.ok) return JSON.stringify(said)
+      commands.pendingFrom = secs
+      return commands.okReply({ playing: said.playing, from: secs })
+    }
+
     function channels(words: string): string {
       var terms = String(words).toLowerCase().split(/\s+/).filter(function(t) { return t })
       var out = []

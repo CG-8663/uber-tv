@@ -83,6 +83,8 @@ Item {
     pb.buffering = true
     pb.position = 0
     pb.duration = 0
+    pb.seekTarget = -1
+    seekGap.stop()
     rt.lease("playback", true)
     guide.appPlaying = true
     pb.attempt(value.url)
@@ -315,11 +317,28 @@ Item {
     else pb.player.play()
   }
 
+  // Skips add up, and the player is asked at most every 300 ms (as the
+  // guide's own: a burst of seeks stalled the shell)
+  property real seekTarget: -1
   function seek(seconds) {
     if (!pb.player || pb.closing || !pb.player.seekable) return
-    var to = Math.max(0, Math.min(pb.player.duration - 1000, pb.player.position + seconds * 1000))
-    pb.player.position = to
-    pb.event("seeked")
+    var from = pb.seekTarget >= 0 ? pb.seekTarget : pb.player.position
+    pb.seekTarget = Math.max(0, Math.min(pb.player.duration - 1000, from + seconds * 1000))
+    if (!seekGap.running) pb.applySeek()
+  }
+  function applySeek() {
+    if (pb.seekTarget < 0) return
+    if (pb.player && !pb.closing) {
+      pb.player.position = pb.seekTarget
+      pb.event("seeked")
+    }
+    pb.seekTarget = -1
+    seekGap.restart()
+  }
+  Timer {
+    id: seekGap
+    interval: 300
+    onTriggered: pb.applySeek()
   }
 
   // the runtime stopping on its own: the media stops, and it's said
