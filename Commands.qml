@@ -345,6 +345,7 @@ Scope {
   ]
 
   IpcHandler {
+    id: ipc
     target: "om-pg"
 
     function help(): string {
@@ -1280,7 +1281,7 @@ Scope {
       if (!m) return commands.failReply("a time is seconds, or h:mm:ss or mm:ss")
       var parts = String(at).trim().split(":").map(Number)
       var secs = parts.reduce(function(a, b) { return a * 60 + b }, 0)
-      var said = JSON.parse(commands.play(id))
+      var said = JSON.parse(ipc.play(id))
       if (!said.ok) return JSON.stringify(said)
       commands.pendingFrom = secs
       return commands.okReply({ playing: said.playing, from: secs })

@@ -75,8 +75,10 @@ function timer() {
     pendingPlay: null, pendingFrom: null,
     okReply: x => JSON.stringify(Object.assign({ ok: true }, x)), failReply: m => JSON.stringify({ ok: false, error: m }) }
   const playSoon = { restart() {} }
-  commands.play = id => new Function("guide", "commands", "playSoon", "id", block(commandsSrc, "function play(id: string): string {"))(guide, commands, playSoon, id)
-  const playAt = (id, at) => new Function("guide", "commands", "playSoon", "id", "at", block(commandsSrc, "function playAt(id: string, at: string): string {"))(guide, commands, playSoon, id, at)
+  // play and playAt are the IpcHandler's (id: ipc), not commands': playAt reaches play through it
+  assert.match(commandsSrc, /IpcHandler \{\n    id: ipc\n/)
+  const ipc = { play: id => new Function("guide", "commands", "playSoon", "id", block(commandsSrc, "function play(id: string): string {"))(guide, commands, playSoon, id) }
+  const playAt = (id, at) => new Function("guide", "commands", "playSoon", "ipc", "id", "at", block(commandsSrc, "function playAt(id: string, at: string): string {"))(guide, commands, playSoon, ipc, id, at)
   const soonLine = commandsSrc.match(/onTriggered: (if \(commands\.pendingPlay\) \{.*\})\n/)
   assert.ok(soonLine, "playSoon's onTriggered")
   const soon = () => new Function("guide", "commands", soonLine[1])(guide, commands)
@@ -87,8 +89,8 @@ function timer() {
   }
   for (const bad of ["", "abc", "1:2:3:4", "-5", "1.5"]) assert.equal(JSON.parse(playAt("m1", bad)).ok, false, "refused: " + JSON.stringify(bad))
   assert.equal(JSON.parse(playAt("nope", "10")).ok, false, "an id that isn't there")
-  JSON.parse(commands.play("m1"))
+  JSON.parse(ipc.play("m1"))
   soon()
-  assert.deepEqual(played.pop(), ["A.I.", null], "play, after playAt: from where you stopped again")
+  assert.deepEqual(played.pop(), ["A.I.", undefined], "play, after playAt: from where you stopped again")
 }
 console.log("seek: all good")
